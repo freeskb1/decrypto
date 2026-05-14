@@ -6,6 +6,7 @@ import {
   subscribeTeam,
   shuffleTeamKeywords,
   markTeamReady,
+  startRound,
 } from "@/lib/game";
 import type { Room, Player, TeamState, TeamId } from "@/types/game";
 import { Check, Lock, Shuffle, Info } from "lucide-react";
@@ -31,6 +32,18 @@ export default function KeywordReveal({
       u2();
     };
   }, [room.id]);
+
+  // 안전망: 양 팀 모두 준비됐는데 아직 라운드 시작 안 됐으면 호스트가 시작
+  useEffect(() => {
+    if (
+      me?.isHost &&
+      white?.keywordReady === true &&
+      black?.keywordReady === true &&
+      room.phase === "keyword_reveal"
+    ) {
+      startRound(room.id, 1).catch(() => {});
+    }
+  }, [white?.keywordReady, black?.keywordReady, me?.isHost, room.id, room.phase]);
 
   if (!white || !black || !me?.team) {
     return <div className="p-4 text-sm text-zinc-400">불러오는 중...</div>;
@@ -58,7 +71,11 @@ export default function KeywordReveal({
 
   const handleReady = async () => {
     if (myReady) return;
-    await markTeamReady(room.id, myTeamId);
+    try {
+      await markTeamReady(room.id, myTeamId);
+    } catch (e: any) {
+      toast.show(e.message || "준비 완료 처리 실패", "error");
+    }
   };
 
   return (

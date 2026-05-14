@@ -137,7 +137,29 @@ export async function joinRoom(
   return roomId;
 }
 
-// ====== 구독: 방 정보 ======
+// ====== 방 참가 (roomId로 직접 - 링크 접속용) ======
+export async function joinRoomById(
+  roomId: string,
+  uid: string,
+  nickname: string
+): Promise<void> {
+  const roomSnap = await getDoc(doc(db, "rooms", roomId));
+  if (!roomSnap.exists()) throw new Error("방을 찾을 수 없어요");
+  const room = roomSnap.data() as Room;
+  if (room.phase === "ended") throw new Error("이미 종료된 방이에요");
+  if (room.phase !== "waiting") throw new Error("이미 시작된 게임이에요");
+
+  const now = Date.now();
+  await setDoc(doc(db, "rooms", roomId, "players", uid), {
+    uid,
+    nickname,
+    team: null,
+    isHost: false,
+    isOnline: true,
+    joinedAt: now,
+    lastSeenAt: now,
+  } as Player);
+}
 export function subscribeRoom(
   roomId: string,
   cb: (room: Room | null) => void
@@ -320,35 +342,13 @@ export async function goToKeywordReveal(roomId: string) {
   await updateDoc(doc(db, "rooms", roomId), { phase: "keyword_reveal" });
 }
 
-// 키워드 공개 화면에서 "준비 완료" - 트랜잭션으로 안전하게 처리
-// 양 팀 모두 준비되면 1라운드 시작
+// 키워드 공개 화면에서 "준비 완료"
+// 내 팀을 준비 완료로 표시만 한다.
+// 양 팀 모두 준비되면 KeywordReveal 컴포넌트(호스트)가 startRound를 호출한다.
 export async function markTeamReady(roomId: string, teamId: TeamId) {
-  const shouldStartRound = await runTransaction(db, async (tx) => {
-    const whiteRef = doc(db, "rooms", roomId, "teams", "white");
-    const blackRef = doc(db, "rooms", roomId, "teams", "black");
-    const whiteSnap = await tx.get(whiteRef);
-    const blackSnap = await tx.get(blackRef);
-
-    if (!whiteSnap.exists() || !blackSnap.exists()) return false;
-
-    const white = whiteSnap.data() as TeamState;
-    const black = blackSnap.data() as TeamState;
-
-    // 내 팀을 준비 완료로 표시
-    const myRef = teamId === "white" ? whiteRef : blackRef;
-    tx.update(myRef, { keywordReady: true });
-
-    // 상대 팀이 이미 준비됐는지 확인
-    const otherReady =
-      teamId === "white" ? black.keywordReady : white.keywordReady;
-
-    return otherReady === true;
+  await updateDoc(doc(db, "rooms", roomId, "teams", teamId), {
+    keywordReady: true,
   });
-
-  // 양 팀 다 준비됐으면 라운드 시작 (트랜잭션 밖에서)
-  if (shouldStartRound) {
-    await startRound(roomId, 1);
-  }
 }
 
 // ====== 라운드 시작 ======
@@ -363,6 +363,11 @@ export async function startRound(roomId: string, roundNumber: number) {
   // 듀얼 모드일 때 처리
   const roomSnap = await getDoc(doc(db, "rooms", roomId));
   const room = roomSnap.data() as Room;
+
+  // 중복 실행 방지: 이미 해당 라운드가 진행 중이면 무시
+  if (room.phase === "round_in_progress" && room.roundNumber >= roundNumber) {
+    return;
+  }
 
   // 암호전달자 순환
   const whiteEncryptorIdx = (roundNumber - 1) % Math.max(white.playerOrder.length, 1);
