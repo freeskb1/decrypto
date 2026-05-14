@@ -41,6 +41,8 @@ export interface TeamState {
   // 결과 화면 완료 상태
   ownResultAcked: boolean;
   interceptAcked: boolean;
+  // 키워드 공개 화면에서 준비 완료
+  keywordReady: boolean;
 }
 
 export interface RoundTeamData {

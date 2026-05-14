@@ -40,8 +40,8 @@ export default function KeywordReveal({
   const myTeam = myTeamId === "white" ? white : black;
   const otherTeam = myTeamId === "white" ? black : white;
   const remaining = 2 - myTeam.shuffleUsedCount;
-  const myReady = myTeam.ownResultAcked;
-  const otherReady = otherTeam.ownResultAcked;
+  const myReady = myTeam.keywordReady;
+  const otherReady = otherTeam.keywordReady;
 
   const handleShuffle = async () => {
     if (remaining <= 0) {
@@ -121,12 +121,12 @@ export default function KeywordReveal({
         <div className="flex gap-1.5 mt-3">
           <ReadyBadge
             teamName={white.name}
-            ready={white.ownResultAcked}
+            ready={white.keywordReady}
             color="bg-blue-500"
           />
           <ReadyBadge
             teamName={black.name}
-            ready={black.ownResultAcked}
+            ready={black.keywordReady}
             color="bg-zinc-700"
           />
         </div>

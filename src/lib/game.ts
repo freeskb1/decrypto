@@ -236,6 +236,7 @@ export async function assignTeamsAndStart(roomId: string) {
     clueAccumulation: { "1": [], "2": [], "3": [], "4": [] },
     ownResultAcked: false,
     interceptAcked: false,
+    keywordReady: false,
   };
   const blackTeam: TeamState = {
     name: "블랙팀",
@@ -248,6 +249,7 @@ export async function assignTeamsAndStart(roomId: string) {
     clueAccumulation: { "1": [], "2": [], "3": [], "4": [] },
     ownResultAcked: false,
     interceptAcked: false,
+    keywordReady: false,
   };
 
   await setDoc(doc(db, "rooms", roomId, "teams", "white"), whiteTeam);
@@ -318,43 +320,33 @@ export async function goToKeywordReveal(roomId: string) {
   await updateDoc(doc(db, "rooms", roomId), { phase: "keyword_reveal" });
 }
 
-// 양 팀 준비 완료 시 → 1라운드 시작
-const readyState: Record<string, { white: boolean; black: boolean }> = {};
-
-export async function setTeamReady(roomId: string, teamId: TeamId) {
-  if (!readyState[roomId]) readyState[roomId] = { white: false, black: false };
-  readyState[roomId][teamId] = true;
-  if (readyState[roomId].white && readyState[roomId].black) {
-    await startRound(roomId, 1);
-    delete readyState[roomId];
-  } else {
-    // 준비 상태를 Firestore에도 반영
-    await updateDoc(doc(db, "rooms", roomId, "teams", teamId), {
-      ownResultAcked: true,
-    });
-  }
-}
-
-// 준비 완료를 Firestore에 저장하는 방식 (개선판)
+// 키워드 공개 화면에서 "준비 완료" - 트랜잭션으로 안전하게 처리
+// 양 팀 모두 준비되면 1라운드 시작
 export async function markTeamReady(roomId: string, teamId: TeamId) {
-  await updateDoc(doc(db, "rooms", roomId, "teams", teamId), {
-    ownResultAcked: true,
+  const shouldStartRound = await runTransaction(db, async (tx) => {
+    const whiteRef = doc(db, "rooms", roomId, "teams", "white");
+    const blackRef = doc(db, "rooms", roomId, "teams", "black");
+    const whiteSnap = await tx.get(whiteRef);
+    const blackSnap = await tx.get(blackRef);
+
+    if (!whiteSnap.exists() || !blackSnap.exists()) return false;
+
+    const white = whiteSnap.data() as TeamState;
+    const black = blackSnap.data() as TeamState;
+
+    // 내 팀을 준비 완료로 표시
+    const myRef = teamId === "white" ? whiteRef : blackRef;
+    tx.update(myRef, { keywordReady: true });
+
+    // 상대 팀이 이미 준비됐는지 확인
+    const otherReady =
+      teamId === "white" ? black.keywordReady : white.keywordReady;
+
+    return otherReady === true;
   });
 
-  // 양 팀 다 준비됐는지 확인
-  const whiteSnap = await getDoc(doc(db, "rooms", roomId, "teams", "white"));
-  const blackSnap = await getDoc(doc(db, "rooms", roomId, "teams", "black"));
-  const whiteReady = whiteSnap.data()?.ownResultAcked;
-  const blackReady = blackSnap.data()?.ownResultAcked;
-
-  if (whiteReady && blackReady) {
-    // 준비 상태 초기화 + 라운드 시작
-    await updateDoc(doc(db, "rooms", roomId, "teams", "white"), {
-      ownResultAcked: false,
-    });
-    await updateDoc(doc(db, "rooms", roomId, "teams", "black"), {
-      ownResultAcked: false,
-    });
+  // 양 팀 다 준비됐으면 라운드 시작 (트랜잭션 밖에서)
+  if (shouldStartRound) {
     await startRound(roomId, 1);
   }
 }
@@ -395,6 +387,16 @@ export async function startRound(roomId: string, roundNumber: number) {
     doc(db, "rooms", roomId, "rounds", String(roundNumber)),
     round
   );
+
+  // 양 팀의 라운드별 ack 플래그 초기화
+  await updateDoc(doc(db, "rooms", roomId, "teams", "white"), {
+    ownResultAcked: false,
+    interceptAcked: false,
+  });
+  await updateDoc(doc(db, "rooms", roomId, "teams", "black"), {
+    ownResultAcked: false,
+    interceptAcked: false,
+  });
 
   await updateDoc(doc(db, "rooms", roomId), {
     phase: "round_in_progress",
