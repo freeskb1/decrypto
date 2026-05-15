@@ -7,9 +7,11 @@
 ## 기술 스택
 
 - Next.js 14 (App Router) + TypeScript
-- Firebase (Auth + Firestore) — 실시간 동기화
+- **Firebase Realtime Database** + Auth — 실시간 동기화
 - Tailwind CSS + lucide-react
 - Pretendard 폰트
+
+> 💡 Firestore가 아닌 **Realtime Database**를 사용합니다. 작업 횟수 무제한이라 채팅이 많은 게임에 유리합니다.
 
 ---
 
@@ -24,22 +26,23 @@
 1. https://console.firebase.google.com 접속 (Google 계정 로그인)
 2. **"프로젝트 추가"** 클릭
 3. 프로젝트 이름 입력 (예: `decrypto-game`)
-4. Google Analytics: **사용 안 함** 선택 (지금은 필요 없음)
+4. Google Analytics: **사용 안 함** 선택
 5. 프로젝트 만들기
 
 ### 1-2. 웹 앱 등록
 
 1. 프로젝트 메인 화면에서 **`</>` (웹) 아이콘** 클릭
 2. 앱 닉네임 입력 (예: `decrypto-web`)
-3. "Firebase 호스팅 설정" 체크 안 함 (Vercel 사용할 거니까)
+3. "Firebase 호스팅 설정" 체크 안 함
 4. 앱 등록
 
-→ 다음 화면에 나오는 **firebaseConfig** 객체를 메모해두세요. 이런 형태입니다:
+→ 화면에 나오는 **firebaseConfig** 객체를 메모해두세요:
 
 ```javascript
 const firebaseConfig = {
   apiKey: "AIzaSy...",
   authDomain: "decrypto-game.firebaseapp.com",
+  databaseURL: "https://decrypto-game-default-rtdb.asia-southeast1.firebasedatabase.app",  // ← 1-4에서 RTDB 생성 후에 보임
   projectId: "decrypto-game",
   storageBucket: "decrypto-game.appspot.com",
   messagingSenderId: "1234567890",
@@ -47,41 +50,53 @@ const firebaseConfig = {
 };
 ```
 
+> ⚠️ `databaseURL`은 처음엔 안 보일 수 있어요. 1-4에서 Realtime Database를 만든 뒤 프로젝트 설정에서 다시 확인하면 추가돼 있습니다.
+
 ### 1-3. 익명 로그인 활성화
 
 1. 왼쪽 메뉴 **Authentication** → **시작하기**
 2. **Sign-in method** 탭
-3. **익명** 항목 클릭 → 사용 설정 → 저장
+3. **익명** 클릭 → 사용 설정 → 저장
 
-### 1-4. Firestore Database 생성
+### 1-4. Realtime Database 생성 (⚠️ Firestore 아님!)
 
-1. 왼쪽 메뉴 **Firestore Database** → **데이터베이스 만들기**
-2. 위치: **`asia-northeast3 (Seoul)`** 선택 (한국에서 가장 빠름)
-3. 보안 규칙: **테스트 모드로 시작** (나중에 강화 가능)
-4. 사용 설정 클릭
+> ⚠️ **이 게임은 Realtime Database를 사용합니다. Firestore가 아닙니다.** 메뉴에서 잘 구분하세요.
 
-### 1-5. Firestore 보안 규칙 (선택)
+1. 왼쪽 메뉴 **"빌드" → "Realtime Database"** 클릭
+   - (Firestore Database 메뉴와 다릅니다)
+2. **"데이터베이스 만들기"** 클릭
+3. 위치: `싱가포르 (asia-southeast1)` 또는 가까운 지역 선택
+   - ⚠️ 한국 리전(asia-northeast3)은 Realtime Database에서 지원 안 됨. 싱가포르가 한국과 가장 가까움
+4. 보안 규칙: **"테스트 모드에서 시작"** 선택
+5. 사용 설정
 
-테스트 모드는 30일 후 만료됩니다. 게임 진행에 필요한 최소 규칙은:
-
-1. **Firestore Database** → **규칙** 탭
-2. 다음 규칙으로 교체 → **게시**
-
+생성되면 데이터베이스 화면이 나옵니다. 화면 상단에 표시되는 URL이 `databaseURL`이에요:
 ```
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /rooms/{roomId} {
-      allow read, write: if request.auth != null;
-      match /{document=**} {
-        allow read, write: if request.auth != null;
+https://decrypto-game-default-rtdb.asia-southeast1.firebasedatabase.app
+```
+
+### 1-5. 보안 규칙 (선택, 테스트 모드는 30일 후 만료)
+
+Realtime Database → **규칙** 탭에서 다음 규칙으로 교체 → **게시**:
+
+```json
+{
+  "rules": {
+    "rooms": {
+      "$roomId": {
+        ".read": "auth != null",
+        ".write": "auth != null"
       }
+    },
+    "roomCodes": {
+      ".read": "auth != null",
+      ".write": "auth != null"
     }
   }
 }
 ```
 
-> 익명 인증된 모든 유저가 모든 방을 읽고 쓸 수 있는 단순 규칙입니다. 게임 자체는 정상 작동하지만 다른 방을 조작할 수도 있으니, 공개 운영하려면 추가 강화를 권장합니다.
+> 인증된 사용자만 모든 방을 읽고 쓸 수 있는 간단한 규칙. 게임은 정상 작동하지만, 공개 운영하려면 보안 강화 필요.
 
 ---
 
@@ -92,19 +107,19 @@ service cloud.firestore {
 1. https://github.com 로그인
 2. 오른쪽 위 **`+`** → **New repository**
 3. Repository name: `decrypto-game` (원하는 이름)
-4. **Public** 또는 **Private** (어느 쪽이든 OK)
-5. **README, .gitignore, license 추가 옵션은 모두 체크 해제**
+4. **Public** 또는 **Private**
+5. README, .gitignore, license 옵션 **모두 체크 해제**
 6. **Create repository**
 
 ### 2-2. zip 압축 풀고 파일 업로드
 
 1. 받은 `decrypto-game.zip` 압축 풀기
-2. 안에 보이는 모든 파일/폴더를 선택
+2. 안의 모든 파일/폴더 선택
 3. GitHub 저장소 페이지에 **드래그 앤 드롭**
    - "uploading an existing file" 링크 클릭 → 파일 드래그
 4. Commit message: `initial commit` → **Commit changes**
 
-> ⚠️ `node_modules` 폴더는 들어있지 않아야 합니다. Vercel이 자동으로 설치할 거예요.
+> ⚠️ `node_modules` 폴더는 들어있지 않아야 합니다. Vercel이 자동으로 설치합니다.
 
 ---
 
@@ -113,45 +128,45 @@ service cloud.firestore {
 ### 3-1. Vercel 가입 / 로그인
 
 1. https://vercel.com 접속
-2. **Continue with GitHub** 선택 (GitHub 계정 연동이 편함)
+2. **Continue with GitHub** 선택
 
 ### 3-2. 프로젝트 import
 
 1. Vercel 대시보드에서 **Add New...** → **Project**
 2. 방금 만든 GitHub 저장소 옆 **Import** 클릭
-3. **Configure Project** 화면이 나타남
-   - Framework Preset: `Next.js` (자동 감지됨)
-   - Root Directory: `.` (그대로 둠)
+3. Framework Preset: `Next.js` (자동 감지)
+4. Root Directory: `.` 그대로
 
 ### 3-3. 환경변수 입력 (중요!)
 
-**Environment Variables** 섹션을 펼친 뒤 다음 6개를 각각 추가합니다 (1-2 단계에서 받은 firebaseConfig 값):
+**Environment Variables** 섹션을 펼치고 다음 **7개**를 각각 추가합니다:
 
 | Name | Value |
 |------|-------|
-| `NEXT_PUBLIC_FIREBASE_API_KEY` | (apiKey 값) |
-| `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` | (authDomain 값) |
-| `NEXT_PUBLIC_FIREBASE_PROJECT_ID` | (projectId 값) |
-| `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET` | (storageBucket 값) |
-| `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID` | (messagingSenderId 값) |
-| `NEXT_PUBLIC_FIREBASE_APP_ID` | (appId 값) |
+| `NEXT_PUBLIC_FIREBASE_API_KEY` | (apiKey) |
+| `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` | (authDomain) |
+| `NEXT_PUBLIC_FIREBASE_DATABASE_URL` | (databaseURL) ⚠️ 신규 |
+| `NEXT_PUBLIC_FIREBASE_PROJECT_ID` | (projectId) |
+| `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET` | (storageBucket) |
+| `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID` | (messagingSenderId) |
+| `NEXT_PUBLIC_FIREBASE_APP_ID` | (appId) |
 
-> 각각 Name 옆 입력칸에 이름, Value 입력칸에 값을 붙여넣고 **Add** 클릭.
+> Name 입력칸에 이름, Value 입력칸에 값을 붙여넣고 **Add** 클릭.
 
 ### 3-4. 배포
 
 1. **Deploy** 클릭
 2. 2~3분 기다리면 빌드 완료
-3. 축하 화면 + 자동 생성된 URL (예: `decrypto-game-xxx.vercel.app`)
+3. 자동 생성된 URL (예: `decrypto-game-xxx.vercel.app`)
 
 ---
 
 ## 4. 게임 플레이!
 
-생성된 URL을 친구들에게 공유하고:
+URL을 친구들에게 공유하고:
 1. 닉네임 입력
 2. 한 명이 "방 만들기" → 4자리 코드 공유
-3. 다른 사람들이 코드로 참가
+3. 다른 사람들이 코드로 참가 (또는 링크로 직접 접속)
 4. 방장이 "팀 랜덤 배정" → 게임 시작
 
 ---
@@ -159,16 +174,17 @@ service cloud.firestore {
 # 🔧 트러블슈팅
 
 ### "Firebase 초기화 실패" 같은 에러
-환경변수 6개를 모두 정확히 입력했는지 확인하세요. Vercel 대시보드 → 프로젝트 → Settings → Environment Variables에서 재확인. 수정했으면 **재배포** 필요 (Deployments 탭 → 최근 배포 → "..." → Redeploy).
+환경변수 7개 (특히 `NEXT_PUBLIC_FIREBASE_DATABASE_URL`)가 모두 정확한지 확인. Vercel Settings → Environment Variables에서 재확인. 수정했으면 **재배포** 필요 (Deployments 탭 → 최근 배포 → "..." → Redeploy).
 
-### Firestore "permission denied" 에러
-1-4 단계 보안 규칙이 테스트 모드인지 확인. 만료됐다면 1-5 단계의 규칙을 적용하세요.
+### "방을 찾을 수 없어요" / 데이터 안 보임
+1. Realtime Database가 실제로 생성됐는지 (Firestore 아님!)
+2. `NEXT_PUBLIC_FIREBASE_DATABASE_URL`이 정확한지
+
+### "permission denied"
+Realtime Database → 규칙이 테스트 모드인지 확인. 만료됐다면 1-5의 규칙을 적용하세요.
 
 ### 익명 로그인 안 됨
-Authentication → Sign-in method → 익명이 **사용 설정됨** 상태인지 확인.
-
-### 방 코드 찾을 수 없음
-방을 만든 사람과 참가하는 사람의 Firebase 프로젝트가 같은 곳을 봐야 합니다. 다른 URL을 쓰고 있다면 같은 환경변수를 사용하는지 확인.
+Authentication → Sign-in method → 익명이 **사용 설정됨** 인지 확인.
 
 ---
 

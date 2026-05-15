@@ -1,18 +1,20 @@
 import {
-  doc,
-  getDoc,
-  setDoc,
-  updateDoc,
-  collection,
-  addDoc,
+  ref,
+  get,
+  set,
+  update,
+  remove,
+  push,
+  onValue,
+  off,
   query,
-  where,
-  getDocs,
-  onSnapshot,
+  orderByChild,
   runTransaction,
+  serverTimestamp,
+  onDisconnect,
   Unsubscribe,
-  orderBy,
-} from "firebase/firestore";
+  DataSnapshot,
+} from "firebase/database";
 import { signInAnonymously, onAuthStateChanged, User } from "firebase/auth";
 import { db, auth } from "./firebase";
 import type {
@@ -37,6 +39,29 @@ import {
 import keywordsData from "./keywords.json";
 
 const KEYWORDS_POOL: string[] = keywordsData.keywords;
+
+// ========================================================================
+// 데이터 구조 (RTDB는 트리)
+// ========================================================================
+// /rooms/{roomId}                          ← Room 데이터
+// /rooms/{roomId}/players/{uid}            ← Player
+// /rooms/{roomId}/teams/white              ← TeamState
+// /rooms/{roomId}/teams/black              ← TeamState
+// /rooms/{roomId}/rounds/{n}               ← Round
+// /rooms/{roomId}/chats/{pushKey}          ← ChatMessage
+// /rooms/{roomId}/usedClues/{normalized}   ← { original, team, roundNumber }
+// /roomCodes/{code}                        ← { roomId }  (코드로 방 빠르게 찾기)
+// ========================================================================
+
+function snapToArray<T>(snap: DataSnapshot): T[] {
+  const out: T[] = [];
+  snap.forEach((child) => {
+    const val = child.val();
+    if (val) out.push(val as T);
+    return false;
+  });
+  return out;
+}
 
 // ====== 인증 ======
 export async function ensureAnonymousAuth(): Promise<User> {
@@ -64,20 +89,22 @@ export async function createRoom(
   connectMode: ConnectMode,
   gameMode: GameMode
 ): Promise<{ roomId: string; code: string }> {
-  // 고유 코드 만들기 (최대 5회 시도)
+  // roomId: push로 자동 생성
+  const newRoomRef = push(ref(db, "rooms"));
+  const roomId = newRoomRef.key!;
+
+  // 고유 코드 만들기 (충돌 시 재시도)
   let code = "";
   for (let i = 0; i < 5; i++) {
     code = generateRoomCode();
-    const q = query(collection(db, "rooms"), where("code", "==", code), where("phase", "in", ["waiting", "team_setup", "rules", "keyword_reveal", "round_in_progress"]));
-    const snap = await getDocs(q);
-    if (snap.empty) break;
+    const codeSnap = await get(ref(db, `roomCodes/${code}`));
+    if (!codeSnap.exists()) break;
   }
 
-  const roomRef = doc(collection(db, "rooms"));
   const now = Date.now();
 
   const room: Room = {
-    id: roomRef.id,
+    id: roomId,
     code,
     createdAt: now,
     hostUid,
@@ -88,10 +115,10 @@ export async function createRoom(
     winner: null,
   };
 
-  await setDoc(roomRef, room);
-
-  // 호스트 추가
-  await setDoc(doc(db, "rooms", roomRef.id, "players", hostUid), {
+  // 방 생성 + 코드 매핑 + 호스트 등록을 한 번에
+  const updates: Record<string, any> = {};
+  updates[`rooms/${roomId}`] = room;
+  updates[`rooms/${roomId}/players/${hostUid}`] = {
     uid: hostUid,
     nickname: hostNickname,
     team: null,
@@ -99,32 +126,31 @@ export async function createRoom(
     isOnline: true,
     joinedAt: now,
     lastSeenAt: now,
-  } as Player);
+  } as Player;
+  updates[`roomCodes/${code}`] = { roomId };
 
-  return { roomId: roomRef.id, code };
+  await update(ref(db), updates);
+
+  return { roomId, code };
 }
 
-// ====== 방 참가 ======
+// ====== 방 참가 (코드로) ======
 export async function joinRoom(
   code: string,
   uid: string,
   nickname: string
 ): Promise<string> {
-  const q = query(collection(db, "rooms"), where("code", "==", code));
-  const snap = await getDocs(q);
-  if (snap.empty) throw new Error("방을 찾을 수 없어요");
+  const codeSnap = await get(ref(db, `roomCodes/${code}`));
+  if (!codeSnap.exists()) throw new Error("방을 찾을 수 없어요");
 
-  // 진행 중인 방 우선
-  const activeDoc =
-    snap.docs.find((d) => d.data().phase !== "ended") || snap.docs[0];
-  const room = activeDoc.data() as Room;
-
+  const roomId = codeSnap.val().roomId;
+  const roomSnap = await get(ref(db, `rooms/${roomId}`));
+  if (!roomSnap.exists()) throw new Error("방을 찾을 수 없어요");
+  const room = roomSnap.val() as Room;
   if (room.phase === "ended") throw new Error("이미 종료된 방이에요");
 
-  const roomId = activeDoc.id;
   const now = Date.now();
-
-  await setDoc(doc(db, "rooms", roomId, "players", uid), {
+  await set(ref(db, `rooms/${roomId}/players/${uid}`), {
     uid,
     nickname,
     team: null,
@@ -137,20 +163,20 @@ export async function joinRoom(
   return roomId;
 }
 
-// ====== 방 참가 (roomId로 직접 - 링크 접속용) ======
+// ====== 방 참가 (roomId로 - 링크 접속용) ======
 export async function joinRoomById(
   roomId: string,
   uid: string,
   nickname: string
 ): Promise<void> {
-  const roomSnap = await getDoc(doc(db, "rooms", roomId));
+  const roomSnap = await get(ref(db, `rooms/${roomId}`));
   if (!roomSnap.exists()) throw new Error("방을 찾을 수 없어요");
-  const room = roomSnap.data() as Room;
+  const room = roomSnap.val() as Room;
   if (room.phase === "ended") throw new Error("이미 종료된 방이에요");
   if (room.phase !== "waiting") throw new Error("이미 시작된 게임이에요");
 
   const now = Date.now();
-  await setDoc(doc(db, "rooms", roomId, "players", uid), {
+  await set(ref(db, `rooms/${roomId}/players/${uid}`), {
     uid,
     nickname,
     team: null,
@@ -160,13 +186,33 @@ export async function joinRoomById(
     lastSeenAt: now,
   } as Player);
 }
+
+// ====== 구독: 방 정보 ======
 export function subscribeRoom(
   roomId: string,
   cb: (room: Room | null) => void
 ): Unsubscribe {
-  return onSnapshot(doc(db, "rooms", roomId), (snap) => {
-    cb(snap.exists() ? (snap.data() as Room) : null);
-  });
+  const r = ref(db, `rooms/${roomId}`);
+  const handler = (snap: DataSnapshot) => {
+    if (snap.exists()) {
+      const val = snap.val();
+      cb({
+        id: roomId,
+        code: val.code,
+        createdAt: val.createdAt,
+        hostUid: val.hostUid,
+        connectMode: val.connectMode,
+        gameMode: val.gameMode,
+        phase: val.phase,
+        roundNumber: val.roundNumber || 0,
+        winner: val.winner ?? null,
+      } as Room);
+    } else {
+      cb(null);
+    }
+  };
+  onValue(r, handler);
+  return () => off(r, "value", handler);
 }
 
 // ====== 구독: 플레이어 목록 ======
@@ -174,12 +220,19 @@ export function subscribePlayers(
   roomId: string,
   cb: (players: Player[]) => void
 ): Unsubscribe {
-  return onSnapshot(collection(db, "rooms", roomId, "players"), (snap) => {
-    const players = snap.docs
-      .map((d) => d.data() as Player)
-      .sort((a, b) => a.joinedAt - b.joinedAt);
+  const r = ref(db, `rooms/${roomId}/players`);
+  const handler = (snap: DataSnapshot) => {
+    const players: Player[] = [];
+    snap.forEach((child) => {
+      const v = child.val();
+      if (v) players.push(v as Player);
+      return false;
+    });
+    players.sort((a, b) => a.joinedAt - b.joinedAt);
     cb(players);
-  });
+  };
+  onValue(r, handler);
+  return () => off(r, "value", handler);
 }
 
 // ====== 구독: 팀 상태 ======
@@ -188,9 +241,30 @@ export function subscribeTeam(
   teamId: TeamId,
   cb: (team: TeamState | null) => void
 ): Unsubscribe {
-  return onSnapshot(doc(db, "rooms", roomId, "teams", teamId), (snap) => {
-    cb(snap.exists() ? (snap.data() as TeamState) : null);
-  });
+  const r = ref(db, `rooms/${roomId}/teams/${teamId}`);
+  const handler = (snap: DataSnapshot) => {
+    if (!snap.exists()) {
+      cb(null);
+      return;
+    }
+    const v = snap.val();
+    // clueAccumulation null/undefined 방어
+    cb({
+      name: v.name,
+      keywords: v.keywords || [],
+      shuffleUsedCount: v.shuffleUsedCount || 0,
+      interceptionTokens: v.interceptionTokens || 0,
+      miscommunicationTokens: v.miscommunicationTokens || 0,
+      playerOrder: v.playerOrder || [],
+      currentEncryptorIdx: v.currentEncryptorIdx || 0,
+      clueAccumulation: v.clueAccumulation || { "1": [], "2": [], "3": [], "4": [] },
+      ownResultAcked: v.ownResultAcked === true,
+      interceptAcked: v.interceptAcked === true,
+      keywordReady: v.keywordReady === true,
+    });
+  };
+  onValue(r, handler);
+  return () => off(r, "value", handler);
 }
 
 // ====== 구독: 라운드 ======
@@ -199,12 +273,39 @@ export function subscribeRound(
   roundNumber: number,
   cb: (round: Round | null) => void
 ): Unsubscribe {
-  return onSnapshot(
-    doc(db, "rooms", roomId, "rounds", String(roundNumber)),
-    (snap) => {
-      cb(snap.exists() ? (snap.data() as Round) : null);
+  const r = ref(db, `rooms/${roomId}/rounds/${roundNumber}`);
+  const handler = (snap: DataSnapshot) => {
+    if (!snap.exists()) {
+      cb(null);
+      return;
     }
-  );
+    const v = snap.val();
+    cb({
+      roundNumber: v.roundNumber,
+      white: hydrateRoundTeamData(v.white),
+      black: hydrateRoundTeamData(v.black),
+      status: v.status,
+      stage: v.stage,
+      encryptingTimerStartAt: v.encryptingTimerStartAt ?? null,
+    });
+  };
+  onValue(r, handler);
+  return () => off(r, "value", handler);
+}
+
+function hydrateRoundTeamData(v: any): RoundTeamData {
+  return {
+    encryptorUid: v?.encryptorUid || "",
+    code: v?.code || [],
+    clues: v?.clues || [],
+    cluesSubmittedAt: v?.cluesSubmittedAt ?? null,
+    ownGuess: v?.ownGuess ?? null,
+    ownGuessAt: v?.ownGuessAt ?? null,
+    ownCorrect: v?.ownCorrect ?? null,
+    interceptGuess: v?.interceptGuess ?? null,
+    interceptGuessAt: v?.interceptGuessAt ?? null,
+    intercepted: v?.intercepted ?? null,
+  };
 }
 
 // ====== 구독: 채팅 ======
@@ -212,13 +313,18 @@ export function subscribeChat(
   roomId: string,
   cb: (messages: ChatMessage[]) => void
 ): Unsubscribe {
-  const q = query(
-    collection(db, "rooms", roomId, "chats"),
-    orderBy("createdAt", "asc")
-  );
-  return onSnapshot(q, (snap) => {
-    cb(snap.docs.map((d) => ({ id: d.id, ...d.data() } as ChatMessage)));
-  });
+  const r = query(ref(db, `rooms/${roomId}/chats`), orderByChild("createdAt"));
+  const handler = (snap: DataSnapshot) => {
+    const messages: ChatMessage[] = [];
+    snap.forEach((child) => {
+      const v = child.val();
+      if (v) messages.push({ id: child.key!, ...v } as ChatMessage);
+      return false;
+    });
+    cb(messages);
+  };
+  onValue(r, handler);
+  return () => off(r, "value", handler);
 }
 
 // ====== 채팅 전송 ======
@@ -226,7 +332,8 @@ export async function sendChat(
   roomId: string,
   msg: Omit<ChatMessage, "id" | "createdAt">
 ) {
-  await addDoc(collection(db, "rooms", roomId, "chats"), {
+  const chatRef = push(ref(db, `rooms/${roomId}/chats`));
+  await set(chatRef, {
     ...msg,
     createdAt: Date.now(),
   });
@@ -234,10 +341,12 @@ export async function sendChat(
 
 // ====== 팀 랜덤 배정 + 키워드 발급 ======
 export async function assignTeamsAndStart(roomId: string) {
-  const playersSnap = await getDocs(
-    collection(db, "rooms", roomId, "players")
-  );
-  const playerUids = playersSnap.docs.map((d) => d.id);
+  const playersSnap = await get(ref(db, `rooms/${roomId}/players`));
+  const playerUids: string[] = [];
+  playersSnap.forEach((child) => {
+    playerUids.push(child.key!);
+    return false;
+  });
 
   const { white, black } = distributeTeams(playerUids);
 
@@ -246,7 +355,6 @@ export async function assignTeamsAndStart(roomId: string) {
   const whiteKeywords = allKeywords.slice(0, 4);
   const blackKeywords = allKeywords.slice(4, 8);
 
-  // 팀 상태 생성
   const whiteTeam: TeamState = {
     name: "화이트팀",
     keywords: whiteKeywords,
@@ -274,19 +382,19 @@ export async function assignTeamsAndStart(roomId: string) {
     keywordReady: false,
   };
 
-  await setDoc(doc(db, "rooms", roomId, "teams", "white"), whiteTeam);
-  await setDoc(doc(db, "rooms", roomId, "teams", "black"), blackTeam);
-
-  // 각 플레이어의 team 필드 업데이트
+  // 한 번의 multi-path update
+  const updates: Record<string, any> = {};
+  updates[`rooms/${roomId}/teams/white`] = whiteTeam;
+  updates[`rooms/${roomId}/teams/black`] = blackTeam;
   for (const uid of white) {
-    await updateDoc(doc(db, "rooms", roomId, "players", uid), { team: "white" });
+    updates[`rooms/${roomId}/players/${uid}/team`] = "white";
   }
   for (const uid of black) {
-    await updateDoc(doc(db, "rooms", roomId, "players", uid), { team: "black" });
+    updates[`rooms/${roomId}/players/${uid}/team`] = "black";
   }
+  updates[`rooms/${roomId}/phase`] = "team_setup";
 
-  // 방 phase 전환
-  await updateDoc(doc(db, "rooms", roomId), { phase: "team_setup" });
+  await update(ref(db), updates);
 }
 
 // ====== 팀 이름 수정 ======
@@ -296,80 +404,85 @@ export async function updateTeamName(
   name: string
 ) {
   const finalName = name.trim() || (teamId === "white" ? "화이트팀" : "블랙팀");
-  await updateDoc(doc(db, "rooms", roomId, "teams", teamId), {
+  await update(ref(db, `rooms/${roomId}/teams/${teamId}`), {
     name: finalName,
   });
 }
 
 // ====== 키워드 셔플 ======
 export async function shuffleTeamKeywords(roomId: string, teamId: TeamId) {
-  await runTransaction(db, async (tx) => {
-    const teamRef = doc(db, "rooms", roomId, "teams", teamId);
-    const otherRef = doc(
-      db,
-      "rooms",
-      roomId,
-      "teams",
-      teamId === "white" ? "black" : "white"
-    );
-    const teamSnap = await tx.get(teamRef);
-    const otherSnap = await tx.get(otherRef);
-    if (!teamSnap.exists()) throw new Error("팀이 없어요");
+  const teamRef = ref(db, `rooms/${roomId}/teams/${teamId}`);
+  const otherTeamId: TeamId = teamId === "white" ? "black" : "white";
+  const otherRef = ref(db, `rooms/${roomId}/teams/${otherTeamId}`);
 
-    const team = teamSnap.data() as TeamState;
-    const other = otherSnap.exists() ? (otherSnap.data() as TeamState) : null;
-    if (team.shuffleUsedCount >= 2) throw new Error("셔플 횟수 초과");
-
-    const exclude = [
-      ...team.keywords,
-      ...(other ? other.keywords : []),
-    ];
-    const newKeywords = pickRandomKeywords(KEYWORDS_POOL, 4, exclude);
-
-    tx.update(teamRef, {
-      keywords: newKeywords,
-      shuffleUsedCount: team.shuffleUsedCount + 1,
-    });
+  // 트랜잭션으로 셔플 카운트와 키워드 원자적 갱신
+  const result = await runTransaction(teamRef, (team) => {
+    if (!team) return team;
+    if ((team.shuffleUsedCount || 0) >= 2) return; // 중단
+    // 키워드는 트랜잭션 안에서 결정 (외부에서 미리 결정하면 변경됨)
+    // 다만 상대 키워드를 알아야 해서 트랜잭션 후 별도 처리...
+    // 간단하게: 트랜잭션 안에서 count만 올리고, 키워드는 외부에서 set
+    team.shuffleUsedCount = (team.shuffleUsedCount || 0) + 1;
+    return team;
   });
+
+  if (!result.committed) throw new Error("셔플 횟수 초과");
+
+  // 키워드 새로 뽑기 (양 팀 기존 키워드 제외)
+  const otherSnap = await get(otherRef);
+  const teamSnap = await get(teamRef);
+  const myCurrentKeywords: string[] = teamSnap.val()?.keywords || [];
+  const otherKeywords: string[] = otherSnap.val()?.keywords || [];
+  const exclude = [...myCurrentKeywords, ...otherKeywords];
+  const newKeywords = pickRandomKeywords(KEYWORDS_POOL, 4, exclude);
+
+  await update(teamRef, { keywords: newKeywords });
 }
 
-// ====== 게임 시작 (rules → keyword_reveal → round 1) ======
+// ====== 게임 시작 단계 전환 ======
 export async function goToRulesScreen(roomId: string) {
-  await updateDoc(doc(db, "rooms", roomId), { phase: "rules" });
+  await update(ref(db, `rooms/${roomId}`), { phase: "rules" });
 }
 
 export async function goToKeywordReveal(roomId: string) {
-  await updateDoc(doc(db, "rooms", roomId), { phase: "keyword_reveal" });
+  await update(ref(db, `rooms/${roomId}`), { phase: "keyword_reveal" });
 }
 
-// 키워드 공개 화면에서 "준비 완료"
-// 내 팀을 준비 완료로 표시만 한다.
-// 양 팀 모두 준비되면 KeywordReveal 컴포넌트(호스트)가 startRound를 호출한다.
+// 키워드 공개 화면에서 "준비 완료" - 표시만 함
+// 양 팀 모두 준비되면 KeywordReveal 컴포넌트(호스트)가 startRound를 호출
 export async function markTeamReady(roomId: string, teamId: TeamId) {
-  await updateDoc(doc(db, "rooms", roomId, "teams", teamId), {
+  await update(ref(db, `rooms/${roomId}/teams/${teamId}`), {
     keywordReady: true,
   });
 }
 
 // ====== 라운드 시작 ======
 export async function startRound(roomId: string, roundNumber: number) {
-  const whiteSnap = await getDoc(doc(db, "rooms", roomId, "teams", "white"));
-  const blackSnap = await getDoc(doc(db, "rooms", roomId, "teams", "black"));
+  // 중복 시작 방지 - 트랜잭션으로 처리
+  const roomRef = ref(db, `rooms/${roomId}`);
+  const result = await runTransaction(roomRef, (room) => {
+    if (!room) return room;
+    // 이미 해당 라운드 이상 진행 중이면 중단
+    if (
+      room.phase === "round_in_progress" &&
+      (room.roundNumber || 0) >= roundNumber
+    ) {
+      return; // 중단
+    }
+    room.phase = "round_in_progress";
+    room.roundNumber = roundNumber;
+    return room;
+  });
+
+  if (!result.committed) return; // 이미 진행 중이면 무시
+
+  const whiteSnap = await get(ref(db, `rooms/${roomId}/teams/white`));
+  const blackSnap = await get(ref(db, `rooms/${roomId}/teams/black`));
 
   if (!whiteSnap.exists() || !blackSnap.exists()) throw new Error("팀 없음");
-  const white = whiteSnap.data() as TeamState;
-  const black = blackSnap.data() as TeamState;
+  const white = whiteSnap.val() as TeamState;
+  const black = blackSnap.val() as TeamState;
 
-  // 듀얼 모드일 때 처리
-  const roomSnap = await getDoc(doc(db, "rooms", roomId));
-  const room = roomSnap.data() as Room;
-
-  // 중복 실행 방지: 이미 해당 라운드가 진행 중이면 무시
-  if (room.phase === "round_in_progress" && room.roundNumber >= roundNumber) {
-    return;
-  }
-
-  // 암호전달자 순환
   const whiteEncryptorIdx = (roundNumber - 1) % Math.max(white.playerOrder.length, 1);
   const blackEncryptorIdx = (roundNumber - 1) % Math.max(black.playerOrder.length, 1);
 
@@ -388,25 +501,15 @@ export async function startRound(roomId: string, roundNumber: number) {
     encryptingTimerStartAt: null,
   };
 
-  await setDoc(
-    doc(db, "rooms", roomId, "rounds", String(roundNumber)),
-    round
-  );
+  const updates: Record<string, any> = {};
+  updates[`rooms/${roomId}/rounds/${roundNumber}`] = round;
+  // ack 플래그 초기화
+  updates[`rooms/${roomId}/teams/white/ownResultAcked`] = false;
+  updates[`rooms/${roomId}/teams/white/interceptAcked`] = false;
+  updates[`rooms/${roomId}/teams/black/ownResultAcked`] = false;
+  updates[`rooms/${roomId}/teams/black/interceptAcked`] = false;
 
-  // 양 팀의 라운드별 ack 플래그 초기화
-  await updateDoc(doc(db, "rooms", roomId, "teams", "white"), {
-    ownResultAcked: false,
-    interceptAcked: false,
-  });
-  await updateDoc(doc(db, "rooms", roomId, "teams", "black"), {
-    ownResultAcked: false,
-    interceptAcked: false,
-  });
-
-  await updateDoc(doc(db, "rooms", roomId), {
-    phase: "round_in_progress",
-    roundNumber,
-  });
+  await update(ref(db), updates);
 }
 
 function emptyRoundTeamData(encryptorUid: string, code: number[]): RoundTeamData {
@@ -425,11 +528,29 @@ function emptyRoundTeamData(encryptorUid: string, code: number[]): RoundTeamData
 }
 
 // ====== 단계 전환 ======
-export async function advanceStage(roomId: string, roundNumber: number, nextStage: RoundStage) {
-  await updateDoc(
-    doc(db, "rooms", roomId, "rounds", String(roundNumber)),
-    { stage: nextStage }
-  );
+export async function advanceStage(
+  roomId: string,
+  roundNumber: number,
+  nextStage: RoundStage
+) {
+  // 같은 stage로 이미 가있으면 무시 (중복 호출 방지)
+  const stageRef = ref(db, `rooms/${roomId}/rounds/${roundNumber}/stage`);
+  await runTransaction(stageRef, (current) => {
+    if (current === nextStage) return; // 중단
+    // stage 순서 체크
+    const order: RoundStage[] = [
+      "announce",
+      "encrypting",
+      "guessing",
+      "own_result",
+      "intercept",
+      "settled",
+    ];
+    if (current && order.indexOf(current) >= order.indexOf(nextStage)) {
+      return; // 이미 뒤로 못 감
+    }
+    return nextStage;
+  });
 }
 
 // ====== 단서 제출 ======
@@ -440,13 +561,17 @@ export async function submitClues(
   clues: string[]
 ) {
   // 단서 재사용 체크
-  const usedQ = query(
-    collection(db, "rooms", roomId, "usedClues"),
-    where("team", "==", teamId)
-  );
-  const usedSnap = await getDocs(usedQ);
+  const usedSnap = await get(ref(db, `rooms/${roomId}/usedClues`));
   const used = new Set<string>();
-  usedSnap.docs.forEach((d) => used.add(normalizeClue(d.data().original)));
+  if (usedSnap.exists()) {
+    usedSnap.forEach((child) => {
+      const v = child.val();
+      if (v && v.team === teamId) {
+        used.add(normalizeClue(v.original));
+      }
+      return false;
+    });
+  }
 
   for (const c of clues) {
     if (used.has(normalizeClue(c))) {
@@ -455,41 +580,33 @@ export async function submitClues(
   }
 
   const now = Date.now();
-  const roundRef = doc(db, "rooms", roomId, "rounds", String(roundNumber));
-  const update: any = {};
-  update[`${teamId}.clues`] = clues;
-  update[`${teamId}.cluesSubmittedAt`] = now;
-  await updateDoc(roundRef, update);
+  const updates: Record<string, any> = {};
+  updates[`rooms/${roomId}/rounds/${roundNumber}/${teamId}/clues`] = clues;
+  updates[`rooms/${roomId}/rounds/${roundNumber}/${teamId}/cluesSubmittedAt`] = now;
 
-  // 사용한 단서 기록
+  // 사용 단서 기록
   for (const c of clues) {
-    await addDoc(collection(db, "rooms", roomId, "usedClues"), {
+    const norm = normalizeClue(c);
+    // key는 정규화된 단서 + 팀 (중복 방지). path-safe 처리
+    const safeKey = `${teamId}_${norm.replace(/[.#$\[\]\/]/g, "_")}`;
+    updates[`rooms/${roomId}/usedClues/${safeKey}`] = {
       original: c,
-      normalized: normalizeClue(c),
+      normalized: norm,
       team: teamId,
       roundNumber,
-    });
+    };
   }
 
-  // 양 팀 다 제출했는지 확인
-  const roundSnap = await getDoc(roundRef);
-  const round = roundSnap.data() as Round;
-  if (round.white.cluesSubmittedAt && round.black.cluesSubmittedAt) {
-    // 양 팀 다 단서 작성 끝
-    const roomSnap = await getDoc(doc(db, "rooms", roomId));
-    const room = roomSnap.data() as Room;
-    if (room.gameMode === "duel") {
-      // 듀얼 모드: 자기 팀 추측 없음 → 바로 가로채기 단계로
-      await updateDoc(roundRef, { stage: "intercept" });
-    } else {
-      // 표준 모드: 자기 팀 추측 단계로
-      await updateDoc(roundRef, { stage: "guessing" });
-    }
-  } else {
-    // 먼저 제출한 쪽 → 상대팀에게 타이머 시작
-    if (round.encryptingTimerStartAt === null) {
-      await updateDoc(roundRef, { encryptingTimerStartAt: now });
-    }
+  await update(ref(db), updates);
+
+  // 먼저 제출한 쪽이면 상대팀에게 타이머 시작
+  const roundSnap = await get(ref(db, `rooms/${roomId}/rounds/${roundNumber}`));
+  const r = roundSnap.val() as Round;
+  const bothSubmitted = r.white?.cluesSubmittedAt && r.black?.cluesSubmittedAt;
+  if (!bothSubmitted && (r.encryptingTimerStartAt === null || r.encryptingTimerStartAt === undefined)) {
+    await update(ref(db, `rooms/${roomId}/rounds/${roundNumber}`), {
+      encryptingTimerStartAt: now,
+    });
   }
 }
 
@@ -500,37 +617,33 @@ export async function submitOwnGuess(
   teamId: TeamId,
   guess: number[]
 ) {
-  const roundRef = doc(db, "rooms", roomId, "rounds", String(roundNumber));
-  const roundSnap = await getDoc(roundRef);
-  const round = roundSnap.data() as Round;
+  const roundSnap = await get(ref(db, `rooms/${roomId}/rounds/${roundNumber}`));
+  const round = roundSnap.val() as Round;
   const teamData = round[teamId];
-
   const correct = arraysEqual(teamData.code, guess);
 
-  const update: any = {};
-  update[`${teamId}.ownGuess`] = guess;
-  update[`${teamId}.ownGuessAt`] = Date.now();
-  update[`${teamId}.ownCorrect`] = correct;
+  const updates: Record<string, any> = {};
+  updates[`rooms/${roomId}/rounds/${roundNumber}/${teamId}/ownGuess`] = guess;
+  updates[`rooms/${roomId}/rounds/${roundNumber}/${teamId}/ownGuessAt`] = Date.now();
+  updates[`rooms/${roomId}/rounds/${roundNumber}/${teamId}/ownCorrect`] = correct;
 
-  await updateDoc(roundRef, update);
-
-  // 코드 누적 단서에 추가 (이번 라운드 단서를 각 코드 번호에 매핑)
-  const teamRef = doc(db, "rooms", roomId, "teams", teamId);
-  const teamSnap = await getDoc(teamRef);
-  const team = teamSnap.data() as TeamState;
+  // 코드 누적 단서 갱신
+  const teamSnap = await get(ref(db, `rooms/${roomId}/teams/${teamId}`));
+  const team = teamSnap.val() as TeamState;
   const newAcc = { ...team.clueAccumulation };
   for (let i = 0; i < 3; i++) {
     const codeNum = String(teamData.code[i]);
     newAcc[codeNum] = [...(newAcc[codeNum] || []), teamData.clues[i]];
   }
-  await updateDoc(teamRef, { clueAccumulation: newAcc });
+  updates[`rooms/${roomId}/teams/${teamId}/clueAccumulation`] = newAcc;
 
   // 통신실패 토큰
   if (!correct) {
-    await updateDoc(teamRef, {
-      miscommunicationTokens: team.miscommunicationTokens + 1,
-    });
+    updates[`rooms/${roomId}/teams/${teamId}/miscommunicationTokens`] =
+      (team.miscommunicationTokens || 0) + 1;
   }
+
+  await update(ref(db), updates);
 
   // 승부 체크
   await checkGameEnd(roomId);
@@ -540,67 +653,64 @@ export async function submitOwnGuess(
 export async function submitInterceptGuess(
   roomId: string,
   roundNumber: number,
-  ourTeam: TeamId, // 우리 팀
+  ourTeam: TeamId,
   guess: number[]
 ) {
   const opponentTeam: TeamId = ourTeam === "white" ? "black" : "white";
-  const roundRef = doc(db, "rooms", roomId, "rounds", String(roundNumber));
-  const roundSnap = await getDoc(roundRef);
-  const round = roundSnap.data() as Round;
+  const roundSnap = await get(ref(db, `rooms/${roomId}/rounds/${roundNumber}`));
+  const round = roundSnap.val() as Round;
   const opponentData = round[opponentTeam];
-
   const intercepted = arraysEqual(opponentData.code, guess);
 
-  // 가로채기는 상대 라운드 데이터의 interceptGuess 필드에 기록
-  const update: any = {};
-  update[`${opponentTeam}.interceptGuess`] = guess;
-  update[`${opponentTeam}.interceptGuessAt`] = Date.now();
-  update[`${opponentTeam}.intercepted`] = intercepted;
-
-  await updateDoc(roundRef, update);
+  const updates: Record<string, any> = {};
+  updates[`rooms/${roomId}/rounds/${roundNumber}/${opponentTeam}/interceptGuess`] =
+    guess;
+  updates[`rooms/${roomId}/rounds/${roundNumber}/${opponentTeam}/interceptGuessAt`] =
+    Date.now();
+  updates[`rooms/${roomId}/rounds/${roundNumber}/${opponentTeam}/intercepted`] =
+    intercepted;
 
   if (intercepted) {
-    const ourRef = doc(db, "rooms", roomId, "teams", ourTeam);
-    const ourSnap = await getDoc(ourRef);
-    const ours = ourSnap.data() as TeamState;
-    await updateDoc(ourRef, {
-      interceptionTokens: ours.interceptionTokens + 1,
-    });
+    const ourSnap = await get(ref(db, `rooms/${roomId}/teams/${ourTeam}`));
+    const ours = ourSnap.val() as TeamState;
+    updates[`rooms/${roomId}/teams/${ourTeam}/interceptionTokens`] =
+      (ours.interceptionTokens || 0) + 1;
   }
 
+  await update(ref(db), updates);
   await checkGameEnd(roomId);
 }
 
 // ====== 라운드 완료 체크 + 다음 라운드 ======
 export async function tryAdvanceToNextRound(roomId: string, roundNumber: number) {
-  const roundRef = doc(db, "rooms", roomId, "rounds", String(roundNumber));
-  const roundSnap = await getDoc(roundRef);
-  const round = roundSnap.data() as Round;
+  const roundSnap = await get(ref(db, `rooms/${roomId}/rounds/${roundNumber}`));
+  if (!roundSnap.exists()) return;
+  const round = roundSnap.val() as Round;
 
-  const roomSnap = await getDoc(doc(db, "rooms", roomId));
-  const room = roomSnap.data() as Room;
-
+  const roomSnap = await get(ref(db, `rooms/${roomId}`));
+  const room = roomSnap.val() as Room;
   const isDuel = room.gameMode === "duel";
 
   // 1라운드는 가로채기 없음
   const interceptDone =
     roundNumber === 1 ||
-    (round.white.interceptGuessAt !== null && round.black.interceptGuessAt !== null);
+    (round.white?.interceptGuessAt != null && round.black?.interceptGuessAt != null);
 
   const ownDone =
     isDuel ||
-    (round.white.ownGuessAt !== null && round.black.ownGuessAt !== null);
+    (round.white?.ownGuessAt != null && round.black?.ownGuessAt != null);
 
   if (ownDone && interceptDone && round.status !== "completed") {
-    await updateDoc(roundRef, { status: "completed", stage: "settled" });
+    await update(ref(db, `rooms/${roomId}/rounds/${roundNumber}`), {
+      status: "completed",
+      stage: "settled",
+    });
 
-    // 게임 종료 체크는 이미 되었음 (제출 시점에)
-    const roomNow = (await getDoc(doc(db, "rooms", roomId))).data() as Room;
+    // 게임 종료 체크는 이미 제출 시점에 됐음
+    const roomNow = (await get(ref(db, `rooms/${roomId}`))).val() as Room;
     if (roomNow.phase === "ended") return;
 
-    // 다음 라운드 또는 종료
     if (roundNumber >= 8) {
-      // 8라운드 종료
       await endGameByTokens(roomId);
     } else {
       await startRound(roomId, roundNumber + 1);
@@ -610,29 +720,27 @@ export async function tryAdvanceToNextRound(roomId: string, roundNumber: number)
 
 // ====== 승부 체크 ======
 async function checkGameEnd(roomId: string) {
-  const whiteSnap = await getDoc(doc(db, "rooms", roomId, "teams", "white"));
-  const blackSnap = await getDoc(doc(db, "rooms", roomId, "teams", "black"));
-  const white = whiteSnap.data() as TeamState;
-  const black = blackSnap.data() as TeamState;
+  const whiteSnap = await get(ref(db, `rooms/${roomId}/teams/white`));
+  const blackSnap = await get(ref(db, `rooms/${roomId}/teams/black`));
+  const white = whiteSnap.val() as TeamState;
+  const black = blackSnap.val() as TeamState;
 
-  const roomSnap = await getDoc(doc(db, "rooms", roomId));
-  const room = roomSnap.data() as Room;
+  const roomSnap = await get(ref(db, `rooms/${roomId}`));
+  const room = roomSnap.val() as Room;
   const isDuel = room.gameMode === "duel";
 
   let winner: TeamId | "draw" | null = null;
 
-  // 가로채기 2개 먼저 → 승리
-  if (white.interceptionTokens >= 2) winner = "white";
-  else if (black.interceptionTokens >= 2) winner = "black";
+  if ((white.interceptionTokens || 0) >= 2) winner = "white";
+  else if ((black.interceptionTokens || 0) >= 2) winner = "black";
 
-  // 통신실패 2개 → 패배 (듀얼 모드 제외)
   if (!isDuel) {
-    if (white.miscommunicationTokens >= 2) winner = "black";
-    if (black.miscommunicationTokens >= 2) winner = "white";
+    if ((white.miscommunicationTokens || 0) >= 2) winner = "black";
+    if ((black.miscommunicationTokens || 0) >= 2) winner = "white";
   }
 
   if (winner) {
-    await updateDoc(doc(db, "rooms", roomId), {
+    await update(ref(db, `rooms/${roomId}`), {
       phase: "ended",
       winner,
     });
@@ -640,63 +748,87 @@ async function checkGameEnd(roomId: string) {
 }
 
 async function endGameByTokens(roomId: string) {
-  const whiteSnap = await getDoc(doc(db, "rooms", roomId, "teams", "white"));
-  const blackSnap = await getDoc(doc(db, "rooms", roomId, "teams", "black"));
-  const white = whiteSnap.data() as TeamState;
-  const black = blackSnap.data() as TeamState;
+  const whiteSnap = await get(ref(db, `rooms/${roomId}/teams/white`));
+  const blackSnap = await get(ref(db, `rooms/${roomId}/teams/black`));
+  const white = whiteSnap.val() as TeamState;
+  const black = blackSnap.val() as TeamState;
 
   let winner: TeamId | "draw" = "draw";
-  if (white.interceptionTokens > black.interceptionTokens) winner = "white";
-  else if (black.interceptionTokens > white.interceptionTokens) winner = "black";
+  if ((white.interceptionTokens || 0) > (black.interceptionTokens || 0))
+    winner = "white";
+  else if ((black.interceptionTokens || 0) > (white.interceptionTokens || 0))
+    winner = "black";
 
-  await updateDoc(doc(db, "rooms", roomId), {
+  await update(ref(db, `rooms/${roomId}`), {
     phase: "ended",
     winner,
   });
 }
 
 function arraysEqual(a: number[], b: number[]): boolean {
+  if (!a || !b) return false;
   if (a.length !== b.length) return false;
   return a.every((v, i) => v === b[i]);
 }
 
 // ====== 모든 라운드 가져오기 (복기용) ======
 export async function getAllRounds(roomId: string): Promise<Round[]> {
-  const snap = await getDocs(collection(db, "rooms", roomId, "rounds"));
-  return snap.docs
-    .map((d) => d.data() as Round)
-    .sort((a, b) => a.roundNumber - b.roundNumber);
+  const snap = await get(ref(db, `rooms/${roomId}/rounds`));
+  const rounds: Round[] = [];
+  snap.forEach((child) => {
+    const v = child.val();
+    if (v) {
+      rounds.push({
+        roundNumber: v.roundNumber,
+        white: hydrateRoundTeamData(v.white),
+        black: hydrateRoundTeamData(v.black),
+        status: v.status,
+        stage: v.stage,
+        encryptingTimerStartAt: v.encryptingTimerStartAt ?? null,
+      });
+    }
+    return false;
+  });
+  rounds.sort((a, b) => a.roundNumber - b.roundNumber);
+  return rounds;
 }
 
 // ====== 결과 화면 acknowledge ======
 export async function ackOwnResult(roomId: string, teamId: TeamId) {
-  await updateDoc(doc(db, "rooms", roomId, "teams", teamId), {
+  await update(ref(db, `rooms/${roomId}/teams/${teamId}`), {
     ownResultAcked: true,
   });
 }
 
 export async function ackIntercept(roomId: string, teamId: TeamId) {
-  await updateDoc(doc(db, "rooms", roomId, "teams", teamId), {
+  await update(ref(db, `rooms/${roomId}/teams/${teamId}`), {
     interceptAcked: true,
   });
 }
 
 // ====== 라운드 정산 후 ack 초기화 ======
 export async function resetAcks(roomId: string) {
-  await updateDoc(doc(db, "rooms", roomId, "teams", "white"), {
-    ownResultAcked: false,
-    interceptAcked: false,
-  });
-  await updateDoc(doc(db, "rooms", roomId, "teams", "black"), {
-    ownResultAcked: false,
-    interceptAcked: false,
-  });
+  const updates: Record<string, any> = {};
+  updates[`rooms/${roomId}/teams/white/ownResultAcked`] = false;
+  updates[`rooms/${roomId}/teams/white/interceptAcked`] = false;
+  updates[`rooms/${roomId}/teams/black/ownResultAcked`] = false;
+  updates[`rooms/${roomId}/teams/black/interceptAcked`] = false;
+  await update(ref(db), updates);
 }
 
-// ====== 하트비트: 접속 상태 갱신 ======
+// ====== 하트비트: onDisconnect 활용 + 가끔 갱신 ======
+let heartbeatSetup: Record<string, boolean> = {};
+
 export async function updateHeartbeat(roomId: string, uid: string) {
   try {
-    await updateDoc(doc(db, "rooms", roomId, "players", uid), {
+    // 처음 호출 시 onDisconnect 설정 (방을 나가면 자동으로 isOnline = false)
+    const key = `${roomId}:${uid}`;
+    if (!heartbeatSetup[key]) {
+      heartbeatSetup[key] = true;
+      const onlineRef = ref(db, `rooms/${roomId}/players/${uid}/isOnline`);
+      onDisconnect(onlineRef).set(false);
+    }
+    await update(ref(db, `rooms/${roomId}/players/${uid}`), {
       lastSeenAt: Date.now(),
       isOnline: true,
     });
