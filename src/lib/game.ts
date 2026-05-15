@@ -103,7 +103,19 @@ export async function createRoom(
 
   const now = Date.now();
 
-  const room: Room = {
+  const hostPlayer: Player = {
+    uid: hostUid,
+    nickname: hostNickname,
+    team: null,
+    isHost: true,
+    isOnline: true,
+    joinedAt: now,
+    lastSeenAt: now,
+  };
+
+  // room 객체 안에 players를 포함해서 한 번에 set
+  // (부모 경로 rooms/{roomId}와 자식 경로 rooms/{roomId}/players를 동시에 쓰면 RTDB 에러)
+  const roomData: any = {
     id: roomId,
     code,
     createdAt: now,
@@ -113,20 +125,14 @@ export async function createRoom(
     phase: "waiting",
     roundNumber: 0,
     winner: null,
+    players: {
+      [hostUid]: hostPlayer,
+    },
   };
 
-  // 방 생성 + 코드 매핑 + 호스트 등록을 한 번에
+  // 두 개의 별도 경로(서로 ancestor 관계 아님)에 동시 쓰기 - OK
   const updates: Record<string, any> = {};
-  updates[`rooms/${roomId}`] = room;
-  updates[`rooms/${roomId}/players/${hostUid}`] = {
-    uid: hostUid,
-    nickname: hostNickname,
-    team: null,
-    isHost: true,
-    isOnline: true,
-    joinedAt: now,
-    lastSeenAt: now,
-  } as Player;
+  updates[`rooms/${roomId}`] = roomData;
   updates[`roomCodes/${code}`] = { roomId };
 
   await update(ref(db), updates);
