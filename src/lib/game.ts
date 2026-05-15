@@ -475,8 +475,16 @@ export async function submitClues(
   const roundSnap = await getDoc(roundRef);
   const round = roundSnap.data() as Round;
   if (round.white.cluesSubmittedAt && round.black.cluesSubmittedAt) {
-    // 양 팀 다 단서 작성 끝 → 다음 단계는 추측
-    await updateDoc(roundRef, { stage: "guessing" });
+    // 양 팀 다 단서 작성 끝
+    const roomSnap = await getDoc(doc(db, "rooms", roomId));
+    const room = roomSnap.data() as Room;
+    if (room.gameMode === "duel") {
+      // 듀얼 모드: 자기 팀 추측 없음 → 바로 가로채기 단계로
+      await updateDoc(roundRef, { stage: "intercept" });
+    } else {
+      // 표준 모드: 자기 팀 추측 단계로
+      await updateDoc(roundRef, { stage: "guessing" });
+    }
   } else {
     // 먼저 제출한 쪽 → 상대팀에게 타이머 시작
     if (round.encryptingTimerStartAt === null) {

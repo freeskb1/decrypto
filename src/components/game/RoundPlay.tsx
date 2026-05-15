@@ -43,37 +43,61 @@ export default function RoundPlay({
     };
   }, [room.id, room.roundNumber]);
 
-  // 단계 자동 진행 로직
+  // 단계 자동 진행 로직 (호스트가 담당, 안전망)
   useEffect(() => {
-    if (!round || !me?.team) return;
-    const myTeamId = me.team;
+    if (!round || !me?.team || !me.isHost) return;
+    const isDuel = room.gameMode === "duel";
 
-    // 단계 B (encrypting) → C (guessing): 양 팀 단서 다 제출되면 자동 진행은 submitClues 내부에서 처리됨
+    // 단계 B (encrypting) → 다음: 양 팀 단서 다 제출되면
+    if (
+      round.stage === "encrypting" &&
+      round.white.cluesSubmittedAt &&
+      round.black.cluesSubmittedAt
+    ) {
+      // 듀얼 모드는 자기팀 추측 단계 없이 바로 가로채기로
+      advanceStage(
+        room.id,
+        round.roundNumber,
+        isDuel ? "intercept" : "guessing"
+      );
+      return;
+    }
+
     // 단계 C (guessing) → D-1 (own_result): 양 팀 추측 다 끝나면
-    if (round.stage === "guessing" && round.white.ownGuessAt && round.black.ownGuessAt) {
-      // 단계 own_result로 진행
-      if (me.isHost) {
+    // 듀얼 모드는 한 팀만 추측해도 진행 (각자 알아서)
+    if (round.stage === "guessing") {
+      const whiteDone = round.white.ownGuessAt !== null;
+      const blackDone = round.black.ownGuessAt !== null;
+      if (whiteDone && blackDone) {
         advanceStage(room.id, round.roundNumber, "own_result");
+        return;
       }
     }
 
-    // 단계 D-1 → D-2: 양 팀 모두 ack하면
-    if (round.stage === "own_result" && white?.ownResultAcked && black?.ownResultAcked) {
-      if (me.isHost) {
-        advanceStage(room.id, round.roundNumber, "intercept");
-      }
+    // 단계 D-1 → D-2: 양 팀 모두 결과 확인하면
+    if (
+      round.stage === "own_result" &&
+      white?.ownResultAcked &&
+      black?.ownResultAcked
+    ) {
+      advanceStage(room.id, round.roundNumber, "intercept");
+      return;
     }
 
-    // 단계 D-2 끝나면 다음 라운드 자동 진행 검토
+    // 단계 D-2 → 다음 라운드
     if (round.stage === "intercept") {
       const isDuel = room.gameMode === "duel";
-      const interceptDone = round.roundNumber === 1 ||
-        (round.white.interceptGuessAt && round.black.interceptGuessAt);
-      const ackDone = white?.interceptAcked && black?.interceptAcked;
-      if (interceptDone && (round.roundNumber === 1 || ackDone)) {
-        if (me.isHost) {
-          tryAdvanceToNextRound(room.id, round.roundNumber);
-        }
+      // 1라운드는 가로채기 스킵, 그 외엔 양 팀 가로채기 완료 필요
+      const interceptDone =
+        round.roundNumber === 1 ||
+        (round.white.interceptGuessAt !== null &&
+          round.black.interceptGuessAt !== null);
+      // 양 팀이 가로채기 결과 화면 확인 완료
+      const ackDone =
+        white?.interceptAcked === true && black?.interceptAcked === true;
+      if (interceptDone && ackDone) {
+        tryAdvanceToNextRound(room.id, round.roundNumber);
+        return;
       }
     }
   }, [round, white, black, me, room.id, room.gameMode, room.roundNumber]);
@@ -87,12 +111,13 @@ export default function RoundPlay({
   const otherTeam = myTeamId === "white" ? black : white;
 
   const stage = round.stage;
+  const isOnline = room.connectMode === "online";
 
   return (
-    <div className="min-h-screen flex flex-col items-center bg-zinc-50">
-      <div className="w-full max-w-sm bg-white border border-zinc-200 rounded-2xl my-4 mx-4 shadow-sm overflow-hidden flex flex-col flex-1 min-h-[600px]">
+    <div className="h-[100dvh] flex flex-col items-center bg-zinc-50 py-4 px-4">
+      <div className="w-full max-w-sm bg-white border border-zinc-200 rounded-2xl shadow-sm overflow-hidden flex flex-col flex-1 min-h-0">
         {/* 헤더 - 기록지 버튼 */}
-        <div className="flex items-center px-4 pt-3 pb-1 gap-2">
+        <div className="flex items-center px-4 pt-3 pb-1 gap-2 shrink-0">
           <button
             onClick={() => setShowNoteSheet(true)}
             className="p-1.5 hover:bg-zinc-100 rounded"
@@ -101,8 +126,8 @@ export default function RoundPlay({
           </button>
         </div>
 
-        {/* 단계별 화면 */}
-        <div className="flex-1 flex flex-col">
+        {/* 단계별 화면 - 스크롤 가능, 채팅이 커지면 이 영역이 줄어듦 */}
+        <div className="flex-1 flex flex-col overflow-y-auto min-h-0">
           {stage === "announce" && (
             <StageAnnounce
               room={room}
@@ -160,8 +185,8 @@ export default function RoundPlay({
           )}
         </div>
 
-        {/* 채팅 패널 */}
-        {room.connectMode === "online" && (
+        {/* 채팅 패널 - 게임 화면과 공존 (덮지 않음) */}
+        {isOnline && (
           <ChatPanel
             roomId={room.id}
             me={me}
