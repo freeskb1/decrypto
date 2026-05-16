@@ -464,29 +464,38 @@ export async function markTeamReady(roomId: string, teamId: TeamId) {
 
 // ====== 라운드 시작 ======
 export async function startRound(roomId: string, roundNumber: number) {
-  // 중복 시작 방지 - phase 경로에만 트랜잭션
-  // (rooms/{roomId} 전체에 트랜잭션을 걸면 players, teams 등 자식 데이터까지 영향)
+  console.log("[startRound] 시작", roomId, roundNumber);
+  // 중복 시작 방지
   const roomSnap = await get(ref(db, `rooms/${roomId}`));
-  if (!roomSnap.exists()) return;
+  if (!roomSnap.exists()) {
+    console.log("[startRound] 방 없음");
+    return;
+  }
   const currentRoom = roomSnap.val() as Room;
   if (
     currentRoom.phase === "round_in_progress" &&
     (currentRoom.roundNumber || 0) >= roundNumber
   ) {
+    console.log("[startRound] 이미 진행 중", currentRoom.phase, currentRoom.roundNumber);
     return; // 이미 진행 중
   }
 
   const whiteSnap = await get(ref(db, `rooms/${roomId}/teams/white`));
   const blackSnap = await get(ref(db, `rooms/${roomId}/teams/black`));
 
-  if (!whiteSnap.exists() || !blackSnap.exists()) throw new Error("팀 없음");
+  if (!whiteSnap.exists() || !blackSnap.exists()) {
+    console.log("[startRound] 팀 없음", whiteSnap.exists(), blackSnap.exists());
+    throw new Error("팀 정보를 찾을 수 없어요");
+  }
   const white = whiteSnap.val() as TeamState;
   const black = blackSnap.val() as TeamState;
 
   const whitePlayerOrder = white.playerOrder || [];
   const blackPlayerOrder = black.playerOrder || [];
-  const whiteEncryptorIdx = (roundNumber - 1) % Math.max(whitePlayerOrder.length, 1);
-  const blackEncryptorIdx = (roundNumber - 1) % Math.max(blackPlayerOrder.length, 1);
+  const whiteEncryptorIdx =
+    (roundNumber - 1) % Math.max(whitePlayerOrder.length, 1);
+  const blackEncryptorIdx =
+    (roundNumber - 1) % Math.max(blackPlayerOrder.length, 1);
 
   const round: Round = {
     roundNumber,
@@ -503,18 +512,20 @@ export async function startRound(roomId: string, roundNumber: number) {
     encryptingTimerStartAt: null,
   };
 
+  console.log("[startRound] round 객체 생성됨", JSON.stringify(round));
+
   // 모두 자식 경로 → 부모/자식 충돌 없음
   const updates: Record<string, any> = {};
   updates[`rooms/${roomId}/rounds/${roundNumber}`] = round;
   updates[`rooms/${roomId}/phase`] = "round_in_progress";
   updates[`rooms/${roomId}/roundNumber`] = roundNumber;
-  // ack 플래그 초기화
   updates[`rooms/${roomId}/teams/white/ownResultAcked`] = false;
   updates[`rooms/${roomId}/teams/white/interceptAcked`] = false;
   updates[`rooms/${roomId}/teams/black/ownResultAcked`] = false;
   updates[`rooms/${roomId}/teams/black/interceptAcked`] = false;
 
   await update(ref(db), updates);
+  console.log("[startRound] update 완료!");
 }
 
 function emptyRoundTeamData(encryptorUid: string, code: number[]): RoundTeamData {

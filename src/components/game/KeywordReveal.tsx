@@ -41,9 +41,12 @@ export default function KeywordReveal({
       black?.keywordReady === true &&
       room.phase === "keyword_reveal"
     ) {
-      startRound(room.id, 1).catch(() => {});
+      startRound(room.id, 1).catch((e) => {
+        toast.show("라운드 시작 실패: " + (e?.message || e), "error");
+        console.error("startRound error:", e);
+      });
     }
-  }, [white?.keywordReady, black?.keywordReady, me?.isHost, room.id, room.phase]);
+  }, [white?.keywordReady, black?.keywordReady, me?.isHost, room.id, room.phase, toast]);
 
   if (!white || !black || !me?.team) {
     return <div className="p-4 text-sm text-zinc-400">불러오는 중...</div>;

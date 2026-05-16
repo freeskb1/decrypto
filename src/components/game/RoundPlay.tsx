@@ -103,7 +103,19 @@ export default function RoundPlay({
   }, [round, white, black, me, room.id, room.gameMode, room.roundNumber]);
 
   if (!white || !black || !round || !me?.team) {
-    return <div className="p-4 text-sm text-zinc-400">불러오는 중...</div>;
+    console.log("[RoundPlay] 대기 중 - white:", !!white, "black:", !!black, "round:", !!round, "myTeam:", me?.team, "roundNumber:", room.roundNumber);
+    return (
+      <div className="p-4 text-sm text-zinc-400">
+        불러오는 중...
+        <div className="text-[10px] text-zinc-300 mt-2">
+          {!white && "팀(화이트) "}
+          {!black && "팀(블랙) "}
+          {!round && `라운드(${room.roundNumber}) `}
+          {!me?.team && "내 팀 정보 "}
+          대기 중
+        </div>
+      </div>
+    );
   }
 
   const myTeamId: TeamId = me.team;
