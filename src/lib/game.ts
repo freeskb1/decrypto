@@ -464,23 +464,17 @@ export async function markTeamReady(roomId: string, teamId: TeamId) {
 
 // ====== 라운드 시작 ======
 export async function startRound(roomId: string, roundNumber: number) {
-  // 중복 시작 방지 - 트랜잭션으로 처리
-  const roomRef = ref(db, `rooms/${roomId}`);
-  const result = await runTransaction(roomRef, (room) => {
-    if (!room) return room;
-    // 이미 해당 라운드 이상 진행 중이면 중단
-    if (
-      room.phase === "round_in_progress" &&
-      (room.roundNumber || 0) >= roundNumber
-    ) {
-      return; // 중단
-    }
-    room.phase = "round_in_progress";
-    room.roundNumber = roundNumber;
-    return room;
-  });
-
-  if (!result.committed) return; // 이미 진행 중이면 무시
+  // 중복 시작 방지 - phase 경로에만 트랜잭션
+  // (rooms/{roomId} 전체에 트랜잭션을 걸면 players, teams 등 자식 데이터까지 영향)
+  const roomSnap = await get(ref(db, `rooms/${roomId}`));
+  if (!roomSnap.exists()) return;
+  const currentRoom = roomSnap.val() as Room;
+  if (
+    currentRoom.phase === "round_in_progress" &&
+    (currentRoom.roundNumber || 0) >= roundNumber
+  ) {
+    return; // 이미 진행 중
+  }
 
   const whiteSnap = await get(ref(db, `rooms/${roomId}/teams/white`));
   const blackSnap = await get(ref(db, `rooms/${roomId}/teams/black`));
@@ -489,17 +483,19 @@ export async function startRound(roomId: string, roundNumber: number) {
   const white = whiteSnap.val() as TeamState;
   const black = blackSnap.val() as TeamState;
 
-  const whiteEncryptorIdx = (roundNumber - 1) % Math.max(white.playerOrder.length, 1);
-  const blackEncryptorIdx = (roundNumber - 1) % Math.max(black.playerOrder.length, 1);
+  const whitePlayerOrder = white.playerOrder || [];
+  const blackPlayerOrder = black.playerOrder || [];
+  const whiteEncryptorIdx = (roundNumber - 1) % Math.max(whitePlayerOrder.length, 1);
+  const blackEncryptorIdx = (roundNumber - 1) % Math.max(blackPlayerOrder.length, 1);
 
   const round: Round = {
     roundNumber,
     white: emptyRoundTeamData(
-      white.playerOrder[whiteEncryptorIdx] || "",
+      whitePlayerOrder[whiteEncryptorIdx] || "",
       generateGameCode()
     ),
     black: emptyRoundTeamData(
-      black.playerOrder[blackEncryptorIdx] || "",
+      blackPlayerOrder[blackEncryptorIdx] || "",
       generateGameCode()
     ),
     status: "in_progress",
@@ -507,8 +503,11 @@ export async function startRound(roomId: string, roundNumber: number) {
     encryptingTimerStartAt: null,
   };
 
+  // 모두 자식 경로 → 부모/자식 충돌 없음
   const updates: Record<string, any> = {};
   updates[`rooms/${roomId}/rounds/${roundNumber}`] = round;
+  updates[`rooms/${roomId}/phase`] = "round_in_progress";
+  updates[`rooms/${roomId}/roundNumber`] = roundNumber;
   // ack 플래그 초기화
   updates[`rooms/${roomId}/teams/white/ownResultAcked`] = false;
   updates[`rooms/${roomId}/teams/white/interceptAcked`] = false;
