@@ -193,6 +193,115 @@ export async function joinRoomById(
   } as Player);
 }
 
+// ====== 광배월드 자동 입장 ======
+// 방 키는 h{광배월드 방 번호} (예: h4821). push id와 겹치지 않음.
+// 방에 hubSid(= 광배월드 판 id)를 두고, 판이 바뀌면 방장이 같은 키로 새 방을 만든다.
+
+function hubPlayer(
+  uid: string,
+  nickname: string,
+  isHost: boolean,
+  hubUid: string
+): Player {
+  const now = Date.now();
+  const p: Player = {
+    uid,
+    nickname,
+    team: null,
+    isHost,
+    isOnline: true,
+    joinedAt: now,
+    lastSeenAt: now,
+  };
+  // RTDB는 undefined 값을 쓰면 에러 → 있을 때만 넣기
+  if (hubUid) p.hubUid = hubUid;
+  return p;
+}
+
+// 방장: 방이 없거나 예전 판(hubSid 다름)이면 새로 만들고, 이번 판이면 그대로 둔다 (멱등)
+export async function ensureHubRoom(opts: {
+  roomId: string;
+  hubRoom: string;
+  sid: string;
+  uid: string;
+  nickname: string;
+  hubUid: string;
+  connectMode: ConnectMode;
+  gameMode: GameMode;
+}): Promise<void> {
+  const { roomId, hubRoom, sid, uid, nickname, hubUid, connectMode, gameMode } =
+    opts;
+  await runTransaction(ref(db, `rooms/${roomId}`), (current: any) => {
+    if (current && current.hubSid === sid) {
+      const players: Record<string, any> = { ...(current.players || {}) };
+      if (players[uid]) return undefined; // 이미 들어와 있음 (새로고침 등) → 변경 없음
+      // 같은 광배월드 방장이 다른 브라우저(익명 uid가 바뀜)로 다시 들어온 경우만 방장 넘겨받기
+      if (
+        hubUid &&
+        current.hubHostUid === hubUid &&
+        current.phase === "waiting"
+      ) {
+        const oldHost: string | undefined = current.hostUid;
+        if (oldHost && players[oldHost]) {
+          players[oldHost] = { ...players[oldHost], isHost: false };
+        }
+        players[uid] = hubPlayer(uid, nickname, true, hubUid);
+        return { ...current, hostUid: uid, players };
+      }
+      return undefined; // 그 외에는 건드리지 않음
+    }
+    // 방이 없거나 예전 판 → 같은 키로 새 방 (예전 판의 라운드·채팅 등은 통째로 교체)
+    const now = Date.now();
+    return {
+      id: roomId,
+      code: hubRoom,
+      createdAt: now,
+      hostUid: uid,
+      hubSid: sid,
+      hubHostUid: hubUid || null,
+      connectMode,
+      gameMode,
+      phase: "waiting",
+      roundNumber: 0,
+      winner: null,
+      players: {
+        [uid]: hubPlayer(uid, nickname, true, hubUid),
+      },
+    };
+  });
+}
+
+// 멤버: 이번 판 방에 멱등하게 입장. 이미 players에 있으면 다시 쓰지 않음 (게임 중이어도 재입장 가능)
+export async function joinHubRoom(opts: {
+  roomId: string;
+  sid: string;
+  uid: string;
+  nickname: string;
+  hubUid: string;
+}): Promise<void> {
+  const { roomId, sid, uid, nickname, hubUid } = opts;
+  const meSnap = await get(ref(db, `rooms/${roomId}/players/${uid}`));
+  if (meSnap.exists()) return;
+  const roomSnap = await get(ref(db, `rooms/${roomId}`));
+  if (!roomSnap.exists()) throw new Error("방장을 기다리는 중이에요");
+  const room = roomSnap.val() as Room;
+  if (room.hubSid !== sid) throw new Error("방장을 기다리는 중이에요");
+  if (room.phase !== "waiting") throw new Error("이미 시작된 게임이에요");
+  await set(
+    ref(db, `rooms/${roomId}/players/${uid}`),
+    hubPlayer(uid, nickname, false, hubUid)
+  );
+}
+
+// 광배월드 방에서 방장이 진행 방식/게임 모드 바꾸기 (대기실에서만)
+export async function updateRoomModes(
+  roomId: string,
+  connectMode: ConnectMode,
+  gameMode: GameMode
+): Promise<void> {
+  await update(ref(db, `rooms/${roomId}`), { connectMode, gameMode });
+}
+
 // ====== 구독: 방 정보 ======
 export function subscribeRoom(
   roomId: string,
@@ -212,6 +321,8 @@ export function subscribeRoom(
         phase: val.phase,
         roundNumber: val.roundNumber || 0,
         winner: val.winner ?? null,
+        hubSid: val.hubSid ?? undefined,
+        hubHostUid: val.hubHostUid ?? undefined,
       } as Room);
     } else {
       cb(null);

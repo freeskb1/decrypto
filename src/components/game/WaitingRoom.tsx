@@ -3,8 +3,8 @@ import { Copy, Crown, Info, Shuffle, User, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { useRouter } from "next/navigation";
-import { assignTeamsAndStart } from "@/lib/game";
-import type { Room, Player } from "@/types/game";
+import { assignTeamsAndStart, updateRoomModes } from "@/lib/game";
+import type { Room, Player, ConnectMode, GameMode } from "@/types/game";
 
 export default function WaitingRoom({
   room,
@@ -27,6 +27,15 @@ export default function WaitingRoom({
       toast.show("코드를 복사했어요", "success");
     } catch {
       toast.show("복사 실패", "error");
+    }
+  };
+
+  // 광배월드 방은 방 만들기 화면을 건너뛰므로 대기실에서 방장이 모드를 고른다
+  const changeModes = async (connectMode: ConnectMode, gameMode: GameMode) => {
+    try {
+      await updateRoomModes(room.id, connectMode, gameMode);
+    } catch (e: any) {
+      toast.show(e?.message || "변경 실패", "error");
     }
   };
 
@@ -59,6 +68,36 @@ export default function WaitingRoom({
             {room.gameMode === "standard" ? "표준" : "듀얼"}
           </div>
         </div>
+
+        {/* 광배월드 방: 방장이 진행 방식/모드 선택 */}
+        {isHost && room.hubSid && (
+          <div className="bg-white border border-zinc-200 rounded-xl p-3 mb-3 space-y-2">
+            <div className="flex gap-1.5">
+              <ModeChip
+                selected={room.connectMode === "online"}
+                onClick={() => changeModes("online", room.gameMode)}
+                label="온라인 (채팅)"
+              />
+              <ModeChip
+                selected={room.connectMode === "offline"}
+                onClick={() => changeModes("offline", room.gameMode)}
+                label="오프라인 (만나서)"
+              />
+            </div>
+            <div className="flex gap-1.5">
+              <ModeChip
+                selected={room.gameMode === "standard"}
+                onClick={() => changeModes(room.connectMode, "standard")}
+                label="표준 (팀당 2~4명)"
+              />
+              <ModeChip
+                selected={room.gameMode === "duel"}
+                onClick={() => changeModes(room.connectMode, "duel")}
+                label="듀얼 (2인)"
+              />
+            </div>
+          </div>
+        )}
 
         {/* 방 코드 */}
         <div className="bg-white border border-zinc-200 rounded-xl p-3 mb-5">
@@ -129,5 +168,29 @@ export default function WaitingRoom({
         </div>
       </div>
     </div>
+  );
+}
+
+function ModeChip({
+  selected,
+  onClick,
+  label,
+}: {
+  selected: boolean;
+  onClick: () => void;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex-1 text-[12px] px-2 py-1.5 rounded-md border transition-colors ${
+        selected
+          ? "border-blue-500 bg-blue-50 text-blue-600"
+          : "border-zinc-200 text-zinc-600 hover:border-zinc-300"
+      }`}
+    >
+      {label}
+    </button>
   );
 }

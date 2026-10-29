@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   ensureAnonymousAuth,
@@ -7,7 +7,10 @@ import {
   subscribePlayers,
   updateHeartbeat,
   joinRoomById,
+  ensureHubRoom,
+  joinHubRoom,
 } from "@/lib/game";
+import { readHubParams, hubRoomId, type HubParams } from "@/lib/hub";
 import type { Room, Player } from "@/types/game";
 import WaitingRoom from "@/components/game/WaitingRoom";
 import TeamSetup from "@/components/game/TeamSetup";
@@ -31,6 +34,26 @@ export default function RoomPage() {
   const [loaded, setLoaded] = useState(false);
   const [nickname, setNickname] = useState("");
   const [joining, setJoining] = useState(false);
+
+  // 광배월드 자동 입장 상태
+  const [hub, setHub] = useState<HubParams | null>(null);
+  const [hubChecked, setHubChecked] = useState(false);
+  const [hubHostDone, setHubHostDone] = useState(false);
+  const [hubError, setHubError] = useState("");
+  const hubHostRef = useRef<string | null>(null);
+  const hubJoinRef = useRef<string | null>(null);
+
+  // 광배월드 쿼리 읽기 (이 방 키와 맞을 때만 적용 → 쿼리가 없으면 기존 흐름 그대로)
+  useEffect(() => {
+    const h = readHubParams(window.location.search);
+    if (h && hubRoomId(h.room) === roomId) {
+      const saved = localStorage.getItem("nickname");
+      const name = h.name || saved || "플레이어";
+      localStorage.setItem("nickname", name);
+      setHub({ ...h, name });
+    }
+    setHubChecked(true);
+  }, [roomId]);
 
   // 익명 인증
   useEffect(() => {
@@ -77,6 +100,63 @@ export default function RoomPage() {
     return () => clearInterval(interval);
   }, [roomId, myUid, players]);
 
+  // 광배월드 방장: h{room} 방을 이번 판(sid)으로 만들기 (멱등 트랜잭션)
+  // 기본 설정: 온라인(채팅) + 표준 — 각자 폰으로 들어오므로 '팀당 폰 1대'인 오프라인은 맞지 않음.
+  // 대기실에서 방장이 바꿀 수 있음.
+  useEffect(() => {
+    if (!hub || !hub.host || !myUid) return;
+    const key = `${hub.sid}:${myUid}`;
+    if (hubHostRef.current === key) return;
+    hubHostRef.current = key;
+    (async () => {
+      try {
+        await ensureHubRoom({
+          roomId,
+          hubRoom: hub.room,
+          sid: hub.sid,
+          uid: myUid,
+          nickname: hub.name,
+          hubUid: hub.uid,
+          connectMode: "online",
+          gameMode: "standard",
+        });
+        localStorage.setItem(`room:${roomId}`, "1");
+        setHubHostDone(true);
+      } catch (e: any) {
+        hubHostRef.current = null;
+        setHubError(e?.message || "방 만들기 실패");
+      }
+    })();
+  }, [hub, myUid, roomId]);
+
+  // 광배월드 멤버(및 방장 예외 상황): 이번 판 방이 생기면 자동 입장 (이미 있으면 건너뜀)
+  const meInRoom = !!myUid && players.some((p) => p.uid === myUid);
+  useEffect(() => {
+    if (!hub || !myUid || !room) return;
+    if (hub.host && !hubHostDone) return;
+    if (room.hubSid !== hub.sid) return; // 방장을 기다리는 중
+    if (meInRoom || room.phase !== "waiting") return;
+    const key = `${hub.sid}:${myUid}`;
+    if (hubJoinRef.current === key) return;
+    hubJoinRef.current = key;
+    (async () => {
+      try {
+        await joinHubRoom({
+          roomId,
+          sid: hub.sid,
+          uid: myUid,
+          nickname: hub.name,
+          hubUid: hub.uid,
+        });
+        localStorage.setItem(`room:${roomId}`, "1");
+        setHubError("");
+      } catch (e: any) {
+        hubJoinRef.current = null; // 다음 방 변경 때 다시 시도
+        setHubError(e?.message || "입장 실패");
+      }
+    })();
+  }, [hub, myUid, room, meInRoom, hubHostDone, roomId]);
+
   const handleJoin = async () => {
     if (!nickname.trim()) {
       toast.show("닉네임을 입력해주세요", "error");
@@ -95,11 +175,21 @@ export default function RoomPage() {
   };
 
   // 로딩 중
-  if (!loaded || !myUid) {
+  if (!loaded || !myUid || !hubChecked) {
     return (
       <div className="min-h-screen flex items-center justify-center text-zinc-400 text-sm">
         불러오는 중...
       </div>
+    );
+  }
+
+  // 광배월드: 이번 판 방이 아직 없음 (방장은 만드는 중, 멤버는 기다리는 중)
+  if (hub && (!room || room.hubSid !== hub.sid)) {
+    return (
+      <HubWait
+        text={hub.host ? "방 만드는 중..." : "방장을 기다리는 중…"}
+        error={hub.host ? hubError : ""}
+      />
     );
   }
 
@@ -124,6 +214,11 @@ export default function RoomPage() {
 
   // 아직 이 방에 참가하지 않음 → 닉네임 입력 + 참가 화면
   if (!me) {
+    // 광배월드: 닉네임 입력 없이 자동 입장 중
+    if (hub && room.phase === "waiting") {
+      return <HubWait text="입장 중..." error={hubError} />;
+    }
+
     // 이미 시작된 게임에는 참가 불가
     if (room.phase !== "waiting") {
       return (
@@ -210,4 +305,30 @@ export default function RoomPage() {
     default:
       return <div>알 수 없는 상태</div>;
   }
+}
+
+// 광배월드 자동 입장 대기 화면
+function HubWait({ text, error }: { text: string; error: string }) {
+  return (
+    <div className="min-h-screen flex items-center justify-center p-4 bg-zinc-50">
+      <div className="w-full max-w-sm bg-white border border-zinc-200 rounded-2xl p-6 shadow-sm text-center">
+        <div className="font-mono text-[22px] font-medium tracking-[0.15em] mb-3">
+          DECRYPTO
+        </div>
+        <div className="text-sm text-zinc-500">{text}</div>
+        {error && (
+          <>
+            <div className="text-xs text-red-500 mt-3">{error}</div>
+            <Button
+              className="w-full mt-4"
+              variant="outline"
+              onClick={() => window.location.reload()}
+            >
+              다시 시도
+            </Button>
+          </>
+        )}
+      </div>
+    </div>
+  );
 }

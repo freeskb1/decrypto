@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
 import { ensureAnonymousAuth, joinRoom } from "@/lib/game";
 import { BookOpen, Plus, Info } from "lucide-react";
+import { readHubParams, hubRoomId } from "@/lib/hub";
 
 export default function Home() {
   const router = useRouter();
@@ -13,12 +14,22 @@ export default function Home() {
   const [nickname, setNickname] = useState("");
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
+  const [hubRedirecting, setHubRedirecting] = useState(false);
 
   useEffect(() => {
+    // 광배월드에서 넘어온 경우: 닉네임·방 만들기 화면을 건너뛰고 바로 대기실로
+    // (쿼리는 그대로 넘겨서 방 화면이 sid/host를 읽게 함)
+    const hub = readHubParams(window.location.search);
+    if (hub) {
+      setHubRedirecting(true);
+      if (hub.name) localStorage.setItem("nickname", hub.name);
+      router.replace(`/room/${hubRoomId(hub.room)}${window.location.search}`);
+      return;
+    }
     // 로컬에 저장된 닉네임 복원
     const saved = localStorage.getItem("nickname");
     if (saved) setNickname(saved);
-  }, []);
+  }, [router]);
 
   const handleCreate = () => {
     if (!nickname.trim()) {
@@ -50,6 +61,14 @@ export default function Home() {
       setLoading(false);
     }
   };
+
+  if (hubRedirecting) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-zinc-400 text-sm">
+        대기실로 이동하는 중...
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-zinc-50">

@@ -26,6 +26,7 @@ export interface Player {
   isOnline: boolean;
   joinedAt: number;
   lastSeenAt: number;
+  hubUid?: string; // 광배월드에서 들어온 경우 광배월드 계정 uid
 }
 
 export interface TeamState {
@@ -88,6 +89,8 @@ export interface Room {
   phase: GamePhase;
   roundNumber: number; // 0이면 시작 전, 1~8
   winner: TeamId | "draw" | null;
+  hubSid?: string; // 광배월드 판 id (광배월드에서 만든 방만)
+  hubHostUid?: string; // 광배월드 방장 uid
 }
 
 // 단서 정규화 (재사용 체크용): 공백 제거 + 소문자
