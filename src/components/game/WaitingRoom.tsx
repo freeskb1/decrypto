@@ -30,7 +30,7 @@ export default function WaitingRoom({
     }
   };
 
-  // 광배월드 방은 방 만들기 화면을 건너뛰므로 대기실에서 방장이 모드를 고른다
+  // 말랑월드 방은 방 만들기 화면을 건너뛰므로 대기실에서 방장이 모드를 고른다
   const changeModes = async (connectMode: ConnectMode, gameMode: GameMode) => {
     try {
       await updateRoomModes(room.id, connectMode, gameMode);
@@ -69,7 +69,7 @@ export default function WaitingRoom({
           </div>
         </div>
 
-        {/* 광배월드 방: 방장이 진행 방식/모드 선택 */}
+        {/* 말랑월드 방: 방장이 진행 방식/모드 선택 */}
         {isHost && room.hubSid && (
           <div className="bg-white border border-zinc-200 rounded-xl p-3 mb-3 space-y-2">
             <div className="flex gap-1.5">

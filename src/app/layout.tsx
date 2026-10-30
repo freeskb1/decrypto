@@ -24,7 +24,7 @@ export default function RootLayout({
     <html lang="ko">
       <body>
         <ToastProvider>{children}</ToastProvider>
-        {/* 광배월드 공용 스크립트: 광배월드에서 온 경우에만 "광배월드" 버튼 + 방장 따라가기 */}
+        {/* 말랑월드 공용 스크립트: 말랑월드에서 온 경우에만 "말랑월드" 버튼 + 방장 따라가기 */}
         <Script
           src="https://kwangbban.vercel.app/hub.js"
           strategy="afterInteractive"

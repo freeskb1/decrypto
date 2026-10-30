@@ -1,12 +1,12 @@
-// 광배월드(https://kwangbban.vercel.app)에서 넘어온 쿼리 읽기
+// 말랑월드(https://kwangbban.vercel.app)에서 넘어온 쿼리 읽기
 // 예: /?room=4821&sid=xxx&uid=yyy&name=철수&host=1&hub=...
 // hub.js(defer)가 window.KWANGBBAN을 늦게 채울 수 있으므로 location.search를 직접 읽는다.
 
 export interface HubParams {
-  room: string; // 광배월드 방 번호 (숫자)
+  room: string; // 말랑월드 방 번호 (숫자)
   sid: string; // 이번 판 id
-  uid: string; // 광배월드 계정 uid
-  name: string; // 광배월드 닉네임 (최대 6자)
+  uid: string; // 말랑월드 계정 uid
+  name: string; // 말랑월드 닉네임 (최대 6자)
   host: boolean; // 방장 여부
 }
 

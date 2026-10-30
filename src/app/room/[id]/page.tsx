@@ -35,7 +35,7 @@ export default function RoomPage() {
   const [nickname, setNickname] = useState("");
   const [joining, setJoining] = useState(false);
 
-  // 광배월드 자동 입장 상태
+  // 말랑월드 자동 입장 상태
   const [hub, setHub] = useState<HubParams | null>(null);
   const [hubChecked, setHubChecked] = useState(false);
   const [hubHostDone, setHubHostDone] = useState(false);
@@ -43,7 +43,7 @@ export default function RoomPage() {
   const hubHostRef = useRef<string | null>(null);
   const hubJoinRef = useRef<string | null>(null);
 
-  // 광배월드 쿼리 읽기 (이 방 키와 맞을 때만 적용 → 쿼리가 없으면 기존 흐름 그대로)
+  // 말랑월드 쿼리 읽기 (이 방 키와 맞을 때만 적용 → 쿼리가 없으면 기존 흐름 그대로)
   useEffect(() => {
     const h = readHubParams(window.location.search);
     if (h && hubRoomId(h.room) === roomId) {
@@ -100,7 +100,7 @@ export default function RoomPage() {
     return () => clearInterval(interval);
   }, [roomId, myUid, players]);
 
-  // 광배월드 방장: h{room} 방을 이번 판(sid)으로 만들기 (멱등 트랜잭션)
+  // 말랑월드 방장: h{room} 방을 이번 판(sid)으로 만들기 (멱등 트랜잭션)
   // 기본 설정: 온라인(채팅) + 표준 — 각자 폰으로 들어오므로 '팀당 폰 1대'인 오프라인은 맞지 않음.
   // 대기실에서 방장이 바꿀 수 있음.
   useEffect(() => {
@@ -129,7 +129,7 @@ export default function RoomPage() {
     })();
   }, [hub, myUid, roomId]);
 
-  // 광배월드 멤버(및 방장 예외 상황): 이번 판 방이 생기면 자동 입장 (이미 있으면 건너뜀)
+  // 말랑월드 멤버(및 방장 예외 상황): 이번 판 방이 생기면 자동 입장 (이미 있으면 건너뜀)
   const meInRoom = !!myUid && players.some((p) => p.uid === myUid);
   useEffect(() => {
     if (!hub || !myUid || !room) return;
@@ -183,7 +183,7 @@ export default function RoomPage() {
     );
   }
 
-  // 광배월드: 이번 판 방이 아직 없음 (방장은 만드는 중, 멤버는 기다리는 중)
+  // 말랑월드: 이번 판 방이 아직 없음 (방장은 만드는 중, 멤버는 기다리는 중)
   if (hub && (!room || room.hubSid !== hub.sid)) {
     return (
       <HubWait
@@ -214,7 +214,7 @@ export default function RoomPage() {
 
   // 아직 이 방에 참가하지 않음 → 닉네임 입력 + 참가 화면
   if (!me) {
-    // 광배월드: 닉네임 입력 없이 자동 입장 중
+    // 말랑월드: 닉네임 입력 없이 자동 입장 중
     if (hub && room.phase === "waiting") {
       return <HubWait text="입장 중..." error={hubError} />;
     }
@@ -307,7 +307,7 @@ export default function RoomPage() {
   }
 }
 
-// 광배월드 자동 입장 대기 화면
+// 말랑월드 자동 입장 대기 화면
 function HubWait({ text, error }: { text: string; error: string }) {
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-zinc-50">

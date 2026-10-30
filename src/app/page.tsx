@@ -17,7 +17,7 @@ export default function Home() {
   const [hubRedirecting, setHubRedirecting] = useState(false);
 
   useEffect(() => {
-    // 광배월드에서 넘어온 경우: 닉네임·방 만들기 화면을 건너뛰고 바로 대기실로
+    // 말랑월드에서 넘어온 경우: 닉네임·방 만들기 화면을 건너뛰고 바로 대기실로
     // (쿼리는 그대로 넘겨서 방 화면이 sid/host를 읽게 함)
     const hub = readHubParams(window.location.search);
     if (hub) {

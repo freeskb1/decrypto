@@ -193,9 +193,9 @@ export async function joinRoomById(
   } as Player);
 }
 
-// ====== 광배월드 자동 입장 ======
-// 방 키는 h{광배월드 방 번호} (예: h4821). push id와 겹치지 않음.
-// 방에 hubSid(= 광배월드 판 id)를 두고, 판이 바뀌면 방장이 같은 키로 새 방을 만든다.
+// ====== 말랑월드 자동 입장 ======
+// 방 키는 h{말랑월드 방 번호} (예: h4821). push id와 겹치지 않음.
+// 방에 hubSid(= 말랑월드 판 id)를 두고, 판이 바뀌면 방장이 같은 키로 새 방을 만든다.
 
 function hubPlayer(
   uid: string,
@@ -235,7 +235,7 @@ export async function ensureHubRoom(opts: {
     if (current && current.hubSid === sid) {
       const players: Record<string, any> = { ...(current.players || {}) };
       if (players[uid]) return undefined; // 이미 들어와 있음 (새로고침 등) → 변경 없음
-      // 같은 광배월드 방장이 다른 브라우저(익명 uid가 바뀜)로 다시 들어온 경우만 방장 넘겨받기
+      // 같은 말랑월드 방장이 다른 브라우저(익명 uid가 바뀜)로 다시 들어온 경우만 방장 넘겨받기
       if (
         hubUid &&
         current.hubHostUid === hubUid &&
@@ -293,7 +293,7 @@ export async function joinHubRoom(opts: {
   );
 }
 
-// 광배월드 방에서 방장이 진행 방식/게임 모드 바꾸기 (대기실에서만)
+// 말랑월드 방에서 방장이 진행 방식/게임 모드 바꾸기 (대기실에서만)
 export async function updateRoomModes(
   roomId: string,
   connectMode: ConnectMode,
