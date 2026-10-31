@@ -944,17 +944,12 @@ export async function resetAcks(roomId: string) {
 }
 
 // ====== 하트비트: onDisconnect 활용 + 가끔 갱신 ======
-let heartbeatSetup: Record<string, boolean> = {};
-
 export async function updateHeartbeat(roomId: string, uid: string) {
   try {
-    // 처음 호출 시 onDisconnect 설정 (방을 나가면 자동으로 isOnline = false)
-    const key = `${roomId}:${uid}`;
-    if (!heartbeatSetup[key]) {
-      heartbeatSetup[key] = true;
-      const onlineRef = ref(db, `rooms/${roomId}/players/${uid}/isOnline`);
-      onDisconnect(onlineRef).set(false);
-    }
+    // 매번 onDisconnect를 다시 건다 (방을 나가면 자동으로 isOnline = false)
+    // — 한 번만 걸면 잠깐 끊겼다 재연결된 뒤에는 예약이 이미 소모돼 다시 안 걸림
+    const onlineRef = ref(db, `rooms/${roomId}/players/${uid}/isOnline`);
+    onDisconnect(onlineRef).set(false).catch(() => {});
     await update(ref(db, `rooms/${roomId}/players/${uid}`), {
       lastSeenAt: Date.now(),
       isOnline: true,

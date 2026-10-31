@@ -75,8 +75,9 @@ export default function RoomPage() {
   }, []);
 
   // 방 + 플레이어 구독
+  // (익명 로그인이 끝난 뒤에 구독 — DB 규칙이 auth != null이라 로그인 전 구독은 거절되어 멈출 수 있음)
   useEffect(() => {
-    if (!roomId) return;
+    if (!roomId || !myUid) return;
     const unsub1 = subscribeRoom(roomId, (r) => {
       setRoom(r);
       setLoaded(true);
@@ -86,19 +87,19 @@ export default function RoomPage() {
       unsub1();
       unsub2();
     };
-  }, [roomId]);
+  }, [roomId, myUid]);
 
-  // 하트비트
+  // 하트비트 (방에 참가한 경우만)
+  // players가 바뀔 때마다 다시 쓰면 내 쓰기 → players 변경 → 다시 쓰기가 반복되므로 "참가 여부"에만 반응
+  const meInRoom = !!myUid && players.some((p) => p.uid === myUid);
   useEffect(() => {
-    if (!roomId || !myUid) return;
-    const me = players.find((p) => p.uid === myUid);
-    if (!me) return; // 방에 참가한 경우만
+    if (!roomId || !myUid || !meInRoom) return;
     const interval = setInterval(() => {
       updateHeartbeat(roomId, myUid);
     }, 15000);
     updateHeartbeat(roomId, myUid);
     return () => clearInterval(interval);
-  }, [roomId, myUid, players]);
+  }, [roomId, myUid, meInRoom]);
 
   // 말랑월드 방장: h{room} 방을 이번 판(sid)으로 만들기 (멱등 트랜잭션)
   // 기본 설정: 온라인(채팅) + 표준 — 각자 폰으로 들어오므로 '팀당 폰 1대'인 오프라인은 맞지 않음.
@@ -130,7 +131,6 @@ export default function RoomPage() {
   }, [hub, myUid, roomId]);
 
   // 말랑월드 멤버(및 방장 예외 상황): 이번 판 방이 생기면 자동 입장 (이미 있으면 건너뜀)
-  const meInRoom = !!myUid && players.some((p) => p.uid === myUid);
   useEffect(() => {
     if (!hub || !myUid || !room) return;
     if (hub.host && !hubHostDone) return;
