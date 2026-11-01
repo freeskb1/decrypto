@@ -7,6 +7,7 @@ import { useToast } from "@/components/ui/toast";
 import { ensureAnonymousAuth, joinRoom } from "@/lib/game";
 import { BookOpen, Plus, Info } from "lucide-react";
 import { readHubParams, hubRoomId } from "@/lib/hub";
+import { Screen } from "@/components/game/ui";
 
 export default function Home() {
   const router = useRouter();
@@ -64,80 +65,69 @@ export default function Home() {
 
   if (hubRedirecting) {
     return (
-      <div className="min-h-screen flex items-center justify-center text-zinc-400 text-sm">
-        대기실로 이동하는 중...
-      </div>
+      <Screen>
+        <div className="flex-1 flex items-center justify-center text-muted text-sm">
+          대기실로 이동하는 중...
+        </div>
+      </Screen>
     );
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-zinc-50">
-      <div className="w-full max-w-sm bg-white border border-zinc-200 rounded-2xl p-6 shadow-sm">
+    <Screen>
+      <div className="flex-1 flex flex-col justify-center gap-4 px-5 py-8">
         {/* 로고 */}
-        <div className="text-center py-6">
-          <div className="font-mono text-[28px] font-medium tracking-[0.15em] text-zinc-900">
-            DECRYPTO
+        <div className="text-center py-4">
+          <div className="inline-block stamp-mark border-[3px] border-stamp text-stamp rounded-lg px-3 py-1 font-serif font-black text-[13px] mb-3">
+            일급 비밀
           </div>
-          <div className="text-[13px] text-zinc-500 mt-1.5 tracking-wide">
+          <div className="font-mono font-bold text-[30px] tracking-[0.18em]">DECRYPTO</div>
+          <div className="font-serif font-black text-[15px] text-muted mt-1">
             암호를 전송하라. 들키지 말고.
           </div>
         </div>
 
-        {/* 닉네임 */}
-        <div className="mb-4">
-          <label className="block text-[13px] text-zinc-600 mb-1.5">닉네임</label>
-          <Input
-            placeholder="이름을 입력하세요"
-            value={nickname}
-            onChange={(e) => setNickname(e.target.value)}
-            maxLength={12}
-            selectOnFocus
-          />
+        <div className="bg-white border-[1.5px] border-line rounded-[20px] p-4 flex flex-col gap-3">
+          <div>
+            <label className="block text-[13px] font-bold text-muted mb-1.5">닉네임</label>
+            <Input
+              placeholder="이름을 입력하세요"
+              value={nickname}
+              onChange={(e) => setNickname(e.target.value)}
+              maxLength={12}
+              selectOnFocus
+            />
+          </div>
+
+          <Button size="lg" className="w-full" onClick={handleCreate} disabled={loading}>
+            <Plus className="w-4 h-4" />방 만들기
+          </Button>
+
+          <div className="flex gap-1.5">
+            <Input
+              placeholder="방 코드 4자리"
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 4))}
+              inputMode="numeric"
+              maxLength={4}
+              className="font-mono tracking-[0.2em] text-center"
+            />
+            <Button variant="outline" onClick={handleJoin} disabled={loading} className="px-5 whitespace-nowrap">
+              참가
+            </Button>
+          </div>
+          <p className="text-xs text-muted text-center">4~8명 · 같은 방에서 각자 폰으로 · 의논은 말로</p>
         </div>
 
-        {/* 방 만들기 */}
-        <Button
-          variant="outline"
-          className="w-full mb-2"
-          size="lg"
-          onClick={handleCreate}
-          disabled={loading}
-        >
-          <Plus className="w-4 h-4" />방 만들기
-        </Button>
-
-        {/* 방 참가 */}
-        <div className="flex gap-1.5 mb-6">
-          <Input
-            placeholder="방 코드"
-            value={code}
-            onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 4))}
-            inputMode="numeric"
-            maxLength={4}
-            className="font-mono tracking-[0.2em] text-center"
-          />
-          <Button onClick={handleJoin} disabled={loading} className="px-4 whitespace-nowrap">
-            참가
+        <div className="flex gap-2">
+          <Button variant="ghost" className="flex-1" onClick={() => router.push("/rules")}>
+            <BookOpen className="w-4 h-4" />게임 규칙
+          </Button>
+          <Button variant="ghost" className="flex-1" onClick={() => router.push("/about")}>
+            <Info className="w-4 h-4" />이 게임 소개
           </Button>
         </div>
-
-        <div className="border-t border-zinc-200 my-4" />
-
-        <div className="flex flex-col gap-1">
-          <button
-            className="w-full py-2.5 text-[13px] text-zinc-600 hover:bg-zinc-50 rounded-lg text-left px-3 flex items-center gap-2"
-            onClick={() => router.push("/rules")}
-          >
-            <BookOpen className="w-4 h-4" />게임 규칙 보기
-          </button>
-          <button
-            className="w-full py-2.5 text-[13px] text-zinc-600 hover:bg-zinc-50 rounded-lg text-left px-3 flex items-center gap-2"
-            onClick={() => router.push("/about")}
-          >
-            <Info className="w-4 h-4" />이 게임 소개
-          </button>
-        </div>
       </div>
-    </div>
+    </Screen>
   );
 }

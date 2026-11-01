@@ -28,3 +28,37 @@ export function readHubParams(search: string): HubParams | null {
 export function hubRoomId(room: string): string {
   return `h${room}`;
 }
+
+interface KwangbbanInfo {
+  hub?: string;
+  sid?: string;
+}
+
+// "말랑월드로" 버튼용 주소. 쿼리 → hub.js가 저장한 값(window.KWANGBBAN) 순서로 찾는다. 없으면 null
+// 방장이 누르면 &end=sid 를 붙여 이번 판을 끝냄 → 모두 말랑월드 방으로 따라옴 (hub.js와 같은 방식)
+export function hubReturnUrl(isHost: boolean): string | null {
+  if (typeof window === "undefined") return null;
+  const q = new URLSearchParams(window.location.search);
+  let hub = q.get("hub") || "";
+  let sid = q.get("sid") || "";
+  const w = window as unknown as { KWANGBBAN?: KwangbbanInfo };
+  if (!hub && w.KWANGBBAN && w.KWANGBBAN.hub) {
+    hub = w.KWANGBBAN.hub;
+    sid = w.KWANGBBAN.sid || sid;
+  }
+  if (!hub) return null;
+  return isHost && sid ? `${hub}&end=${encodeURIComponent(sid)}` : hub;
+}
+
+export function goToHub(isHost: boolean): void {
+  const url = hubReturnUrl(isHost);
+  if (!url) return;
+  // 게임의 떠나기 경고가 이 값을 보고 건너뛰게 (hub.js와 같은 약속)
+  (window as unknown as { KWANGBBAN_LEAVING?: boolean }).KWANGBBAN_LEAVING = true;
+  try {
+    sessionStorage.removeItem("kwangbban");
+  } catch {
+    // 무시
+  }
+  window.location.href = url;
+}

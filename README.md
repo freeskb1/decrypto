@@ -9,9 +9,9 @@
 - Next.js 14 (App Router) + TypeScript
 - **Firebase Realtime Database** + Auth — 실시간 동기화
 - Tailwind CSS + lucide-react
-- Pretendard 폰트
+- Noto Sans KR / Noto Serif KR / IBM Plex Mono (Google Fonts)
 
-> 💡 Firestore가 아닌 **Realtime Database**를 사용합니다. 작업 횟수 무제한이라 채팅이 많은 게임에 유리합니다.
+> 💡 Firestore가 아닌 **Realtime Database**를 사용합니다. 모두 같은 방에서 각자 폰으로 하고, 의논은 말로 합니다 (채팅 없음, 4~8명).
 
 ---
 

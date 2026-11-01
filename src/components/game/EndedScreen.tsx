@@ -2,18 +2,13 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { subscribeTeam, getAllRounds } from "@/lib/game";
-import type { Room, Player, TeamState, TeamId, Round } from "@/types/game";
-import {
-  Trophy,
-  Check,
-  X,
-  Radar,
-  RefreshCw,
-  Share2,
-  ListChecks,
-  ArrowLeft,
-} from "lucide-react";
+import { useToast } from "@/components/ui/toast";
+import { subscribeTeam, rematchSameTeams } from "@/lib/game";
+import { hubReturnUrl, goToHub } from "@/lib/hub";
+import type { Room, Player, TeamState, TeamId } from "@/types/game";
+import { cn, formatScore } from "@/lib/utils";
+import { Screen, StatusBar, KeywordGrid } from "./ui";
+import NoteSheet from "./NoteSheet";
 
 export default function EndedScreen({
   room,
@@ -25,340 +20,157 @@ export default function EndedScreen({
   me: Player | undefined;
 }) {
   const router = useRouter();
+  const toast = useToast();
   const [white, setWhite] = useState<TeamState | null>(null);
   const [black, setBlack] = useState<TeamState | null>(null);
-  const [rounds, setRounds] = useState<Round[]>([]);
-  const [showReview, setShowReview] = useState(false);
-  const [reviewTab, setReviewTab] = useState<TeamId>("white");
+  const [showNotes, setShowNotes] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [hasHub, setHasHub] = useState(false);
 
   useEffect(() => {
     const u1 = subscribeTeam(room.id, "white", setWhite);
     const u2 = subscribeTeam(room.id, "black", setBlack);
-    getAllRounds(room.id).then(setRounds);
     return () => {
       u1();
       u2();
     };
   }, [room.id]);
 
+  useEffect(() => {
+    setHasHub(!!room.hubSid || hubReturnUrl(false) !== null);
+  }, [room.hubSid]);
+
   if (!white || !black || !me?.team) {
-    return <div className="p-4 text-sm text-zinc-400">불러오는 중...</div>;
-  }
-
-  const myTeamId: TeamId = me.team;
-  const myWon = room.winner === myTeamId;
-  const winnerTeam = room.winner === "white" ? white : room.winner === "black" ? black : null;
-
-  if (showReview) {
     return (
-      <ReviewScreen
-        white={white}
-        black={black}
-        rounds={rounds}
-        winner={room.winner}
-        currentTab={reviewTab}
-        setTab={setReviewTab}
-        onBack={() => setShowReview(false)}
-        onHome={() => router.push("/")}
-      />
+      <Screen>
+        <div className="p-6 text-sm text-muted">불러오는 중...</div>
+      </Screen>
     );
   }
 
-  return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-zinc-50">
-      <div className="w-full max-w-sm bg-white border border-zinc-200 rounded-2xl p-5 shadow-sm">
-        {/* 트로피 */}
-        <div className="text-center py-6">
-          <div className="w-[72px] h-[72px] rounded-full bg-blue-50 inline-flex items-center justify-center mb-4">
-            <Trophy className="w-10 h-10 text-blue-600" />
-          </div>
-          <div className="font-mono text-[11px] text-zinc-400 tracking-[0.15em] mb-2">
-            MISSION COMPLETE
-          </div>
-          <div className="text-[24px] font-medium mb-1.5">
-            {room.winner === "draw"
-              ? "무승부"
-              : `${winnerTeam?.name} 승리`}
-          </div>
-          <div className="text-[13px] text-zinc-500">
-            {myWon
-              ? "축하해요!"
-              : room.winner === "draw"
-              ? "팽팽한 승부였어요"
-              : "아쉬워요. 다음에 다시 도전하세요"}
-          </div>
-        </div>
+  const myTeamId: TeamId = me.team;
+  const isDraw = room.winner === "draw";
+  const winnerTeam = room.winner === "white" ? white : room.winner === "black" ? black : null;
+  const myWon = room.winner === myTeamId;
+  const stamp = isDraw ? "공동 승리" : winnerTeam ? `${winnerTeam.name} 승리` : "게임 끝";
+  const score = (t: TeamState) => t.interceptionTokens - t.miscommunicationTokens;
+  const tb = room.tiebreak;
 
-        {/* 최종 점수 */}
-        <div className="bg-white border border-zinc-200 rounded-xl p-3.5 mb-3.5">
-          <div className="text-[10px] text-zinc-500 mb-2.5">최종 점수</div>
-          <div className="flex gap-2 items-stretch">
-            <ScoreCard team={white} teamId="white" winner={room.winner === "white"} />
-            <div className="flex items-center font-mono text-[10px] text-zinc-400">
-              VS
-            </div>
-            <ScoreCard team={black} teamId="black" winner={room.winner === "black"} />
-          </div>
-          <div className="mt-2.5 text-[11px] text-zinc-400 text-center">
-            총 {rounds.length}라운드 진행
-          </div>
-        </div>
+  const handleRematch = async () => {
+    setBusy(true);
+    try {
+      await rematchSameTeams(room.id);
+    } catch (e: any) {
+      toast.show(e?.message || "다시 하기 실패", "error");
+    }
+    setBusy(false);
+  };
 
-        <Button
-          className="w-full mb-2"
-          size="lg"
-          onClick={() => setShowReview(true)}
-        >
-          <ListChecks className="w-4 h-4" />전체 기록 보기
-        </Button>
-        <div className="flex gap-1.5">
-          <Button
-            variant="outline"
-            className="flex-1"
-            size="sm"
-            onClick={() => {
-              const result = `Decrypto: ${winnerTeam?.name || "무승부"}!`;
-              navigator.share?.({ text: result }).catch(() => {
-                navigator.clipboard?.writeText(result);
-              });
-            }}
-          >
-            <Share2 className="w-3.5 h-3.5" />결과 공유
-          </Button>
-          <Button
-            variant="outline"
-            className="flex-1"
-            size="sm"
-            onClick={() => router.push("/")}
-          >
-            <RefreshCw className="w-3.5 h-3.5" />새 게임
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ScoreCard({
-  team,
-  teamId,
-  winner,
-}: {
-  team: TeamState;
-  teamId: TeamId;
-  winner: boolean;
-}) {
-  const isWhite = teamId === "white";
-  return (
-    <div
-      className={`flex-1 p-2.5 rounded-md text-center ${
-        winner ? "bg-blue-50" : "bg-zinc-50"
-      }`}
-    >
-      <div className="flex items-center justify-center gap-1 mb-1.5">
-        <div
-          className={`w-2 h-2 rounded-full ${
-            isWhite ? "bg-blue-500" : "bg-zinc-700"
-          }`}
-        />
-        <span
-          className={`text-xs font-medium ${
-            winner ? "text-blue-700" : ""
-          }`}
-        >
-          {team.name}
-        </span>
-      </div>
-      <div className="text-[10px] text-zinc-500 mb-1.5">
-        가로채기 / 실패
-      </div>
-      <div className="flex gap-1.5 justify-center items-center">
-        <div className="flex gap-0.5">
-          {[0, 1].map((i) => (
-            <div
-              key={i}
-              className={`w-2 h-2 rounded-full ${
-                i < team.interceptionTokens
-                  ? "bg-blue-500"
-                  : "border border-zinc-300"
-              }`}
-            />
-          ))}
-        </div>
-        <span className="text-[10px] text-zinc-400">/</span>
-        <div className="flex gap-0.5">
-          {[0, 1].map((i) => (
-            <div
-              key={i}
-              className={`w-2 h-2 rounded-full ${
-                i < team.miscommunicationTokens
-                  ? "bg-red-500"
-                  : "border border-zinc-300"
-              }`}
-            />
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ReviewScreen({
-  white,
-  black,
-  rounds,
-  winner,
-  currentTab,
-  setTab,
-  onBack,
-  onHome,
-}: {
-  white: TeamState;
-  black: TeamState;
-  rounds: Round[];
-  winner: TeamId | "draw" | null;
-  currentTab: TeamId;
-  setTab: (t: TeamId) => void;
-  onBack: () => void;
-  onHome: () => void;
-}) {
-  const team = currentTab === "white" ? white : black;
-  const otherTeamId: TeamId = currentTab === "white" ? "black" : "white";
+  const handleHub = () => {
+    if (hubReturnUrl(me.isHost)) {
+      goToHub(me.isHost);
+    } else {
+      toast.show("말랑월드 주소를 찾지 못했어요", "error");
+    }
+  };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-zinc-50">
-      <div className="w-full max-w-sm bg-white border border-zinc-200 rounded-2xl p-5 shadow-sm">
-        <div className="flex items-center gap-2 mb-3.5">
-          <button className="p-1.5 hover:bg-zinc-100 rounded" onClick={onBack}>
-            <ArrowLeft className="w-4 h-4" />
-          </button>
-          <div className="text-[15px] font-medium">게임 복기</div>
-          {winner !== "draw" && winner && (
-            <div className="ml-auto text-[11px] px-2 py-0.5 rounded bg-blue-50 text-blue-600">
-              {winner === "white" ? white.name : black.name} 승
-            </div>
-          )}
-        </div>
-
-        {/* 탭 */}
-        <div className="flex gap-1 bg-zinc-50 rounded-md p-0.5 mb-3 border border-zinc-200">
-          <button
-            onClick={() => setTab("white")}
-            className={`flex-1 py-2 text-xs flex items-center justify-center gap-1.5 rounded ${
-              currentTab === "white"
-                ? "font-medium bg-white border border-zinc-200"
-                : "text-zinc-500"
-            }`}
-          >
-            <div className="w-2 h-2 rounded-full bg-blue-500" />
-            {white.name}
-          </button>
-          <button
-            onClick={() => setTab("black")}
-            className={`flex-1 py-2 text-xs flex items-center justify-center gap-1.5 rounded ${
-              currentTab === "black"
-                ? "font-medium bg-white border border-zinc-200"
-                : "text-zinc-500"
-            }`}
-          >
-            <div className="w-2 h-2 rounded-full bg-zinc-700" />
-            {black.name}
-          </button>
-        </div>
-
-        {/* 키워드 (모두 공개) */}
-        <div className="bg-white border border-zinc-200 rounded-xl p-3 mb-3">
-          <div className="flex items-center gap-1.5 mb-2">
-            <span className="text-[11px] text-zinc-500">
-              {team.name} 키워드
-            </span>
-            <span className="ml-auto text-[9px] px-1.5 py-0.5 rounded bg-green-50 text-green-700">
-              공개
-            </span>
+    <Screen>
+      <StatusBar
+        roundLabel={`R${room.roundNumber} 종료`}
+        white={white}
+        black={black}
+        onOpenNotes={() => setShowNotes(true)}
+      />
+      <div className="flex-1 flex flex-col gap-3 px-4 py-4">
+        <div className="relative bg-white border-2 border-ink rounded-[20px] px-4 py-[18px] text-center mt-2">
+          <span className="stamp-mark absolute -right-1.5 -top-3.5 border-[3px] border-stamp text-stamp rounded-lg px-2.5 py-1 font-serif font-black text-[15px] bg-white/85">
+            {stamp}
+          </span>
+          <div className="text-[11px] tracking-[0.2em] font-bold text-muted">끝난 이유</div>
+          <div className="font-serif font-black text-[21px] leading-snug mt-2 mb-1">
+            {room.endReason || "게임이 끝났어요"}
           </div>
-          <div className="grid grid-cols-4 gap-1">
-            {team.keywords.map((kw, i) => (
-              <div key={i} className="text-center p-1.5 bg-zinc-50 rounded-md">
-                <div className="font-mono text-[10px] text-zinc-400">{i + 1}</div>
-                <div className="text-[13px] font-medium truncate">{kw}</div>
-              </div>
-            ))}
+          <div className="text-[13px] text-muted mb-3">
+            {isDraw ? "두 팀 모두 잘했어요" : myWon ? "우리 팀이 이겼어요!" : "아쉬워요. 다음 판에 다시!"}
           </div>
-        </div>
-
-        {/* 라운드 요약 */}
-        <div className="bg-white border border-zinc-200 rounded-xl py-1">
-          <div className="px-3 py-2 border-b border-zinc-200 text-[11px] text-zinc-500">
-            {team.name} 라운드 기록
-          </div>
-          {rounds.map((round, idx) => {
-            const data = round[currentTab];
-            const otherData = round[otherTeamId];
-            const isLast = idx === rounds.length - 1;
-            const isFinal = winner !== "draw" && isLast;
-            return (
-              <div
-                key={round.roundNumber}
-                className="px-3 py-2.5 border-b border-zinc-200 last:border-b-0"
-              >
-                <div className="flex items-center gap-2 mb-1 flex-wrap">
-                  <span className="font-mono text-[11px] text-zinc-400">
-                    #{String(round.roundNumber).padStart(2, "0")}
+          <div className="flex flex-col gap-1.5 text-left">
+            {(["white", "black"] as TeamId[]).map((t) => {
+              const team = t === "white" ? white : black;
+              const lost = !isDraw && room.winner !== null && room.winner !== t;
+              return (
+                <div
+                  key={t}
+                  className={cn(
+                    "flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-bold",
+                    lost ? "bg-got text-stamp" : "bg-paper text-ok"
+                  )}
+                >
+                  <span className="min-w-0">
+                    {team.name} · 가로채기 {team.interceptionTokens} · 해독 실패 {team.miscommunicationTokens}
                   </span>
-                  {data.ownCorrect !== null && (
-                    <>
-                      {data.ownCorrect ? (
-                        <>
-                          <Check className="w-3 h-3 text-green-600" />
-                          <span className="text-[11px] text-green-600">
-                            통신 성공
-                          </span>
-                        </>
-                      ) : (
-                        <>
-                          <X className="w-3 h-3 text-red-500" />
-                          <span className="text-[11px] text-red-500">
-                            통신 실패
-                          </span>
-                        </>
-                      )}
-                    </>
-                  )}
-                  {data.intercepted === true && (
-                    <>
-                      <Radar className="w-3 h-3 text-blue-500 ml-1" />
-                      <span className="text-[11px] text-blue-500">
-                        상대 가로채기
-                      </span>
-                    </>
-                  )}
-                  {isFinal && (
-                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 ml-auto">
-                      결승
-                    </span>
-                  )}
+                  <span className="ml-auto font-mono">{formatScore(score(team))}</span>
                 </div>
-                {data.clues.length > 0 && (
-                  <div className="flex gap-1 text-[11px] text-zinc-500">
-                    <span className="truncate flex-1">
-                      {data.clues.join(" · ")}
-                    </span>
-                    <span className="font-mono">{data.code.join("·")}</span>
-                  </div>
-                )}
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
 
-        <div className="h-3" />
-        <Button className="w-full mb-1.5" size="lg" onClick={onHome}>
-          <RefreshCw className="w-4 h-4" />새 게임 만들기
-        </Button>
-        <Button variant="outline" className="w-full" size="sm" onClick={onHome}>
-          메인으로
-        </Button>
+        {tb && (tb.white || tb.black) && (
+          <div className="bg-white border-[1.5px] border-line rounded-2xl px-3 py-2.5 text-xs">
+            <b className="font-bold">상대 키워드 맞히기</b>
+            {(["white", "black"] as TeamId[]).map((t) => {
+              const g = t === "white" ? tb.white : tb.black;
+              const team = t === "white" ? white : black;
+              return (
+                <div key={t} className="mt-1">
+                  <span className="font-bold">{team.name}</span>
+                  <span className="text-muted"> · {g ? g.join(", ") : "—"}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {(["white", "black"] as TeamId[]).map((t) => {
+          const team = t === "white" ? white : black;
+          return (
+            <div key={t}>
+              <div className="text-xs font-bold text-muted mb-1.5 px-1">{team.name} 키워드</div>
+              <KeywordGrid keywords={team.keywords} teamId={t} />
+            </div>
+          );
+        })}
+
+        <div className="mt-auto flex flex-col gap-2 pt-2">
+          <Button size="lg" className="w-full" onClick={handleRematch} disabled={busy}>
+            같은 팀으로 다시 하기
+          </Button>
+          {hasHub ? (
+            <Button size="lg" variant="outline" className="w-full" onClick={handleHub}>
+              말랑월드로
+            </Button>
+          ) : (
+            <Button size="lg" variant="outline" className="w-full" onClick={() => router.push("/")}>
+              처음 화면으로
+            </Button>
+          )}
+          <p className="text-xs text-muted text-center">
+            다시 하면 새 키워드로 시작해요 (이 모임에서 나온 키워드는 다시 안 나와요)
+          </p>
+        </div>
       </div>
-    </div>
+
+      {showNotes && (
+        <NoteSheet
+          room={room}
+          white={white}
+          black={black}
+          myTeamId={myTeamId}
+          reveal
+          onClose={() => setShowNotes(false)}
+        />
+      )}
+    </Screen>
   );
 }

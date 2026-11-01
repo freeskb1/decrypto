@@ -1,15 +1,16 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import {
   subscribeTeam,
   shuffleTeamKeywords,
   markTeamReady,
-  startRound,
+  startFirstRoundIfReady,
 } from "@/lib/game";
 import type { Room, Player, TeamState, TeamId } from "@/types/game";
-import { Check, Lock, Shuffle, Info } from "lucide-react";
+import { Check, Shuffle } from "lucide-react";
+import { Screen, StatusBar, MeLine, KeywordGrid, WaitLine, nameList } from "./ui";
 
 export default function KeywordReveal({
   room,
@@ -23,6 +24,8 @@ export default function KeywordReveal({
   const toast = useToast();
   const [white, setWhite] = useState<TeamState | null>(null);
   const [black, setBlack] = useState<TeamState | null>(null);
+  const [busy, setBusy] = useState(false);
+  const startTried = useRef(false);
 
   useEffect(() => {
     const u1 = subscribeTeam(room.id, "white", setWhite);
@@ -33,144 +36,101 @@ export default function KeywordReveal({
     };
   }, [room.id]);
 
-  // 안전망: 양 팀 모두 준비됐는데 아직 라운드 시작 안 됐으면 호스트가 시작
+  // 안전망: 양 팀 모두 준비됐는데 아직 시작 안 됐으면 누구 폰이든 1라운드 시작 (멱등)
+  const bothReady = white?.keywordReady === true && black?.keywordReady === true;
   useEffect(() => {
-    if (
-      me?.isHost &&
-      white?.keywordReady === true &&
-      black?.keywordReady === true &&
-      room.phase === "keyword_reveal"
-    ) {
-      startRound(room.id, 1).catch((e) => {
-        toast.show("라운드 시작 실패: " + (e?.message || e), "error");
-        console.error("startRound error:", e);
-      });
+    if (!bothReady || room.phase !== "keyword_reveal") {
+      startTried.current = false;
+      return;
     }
-  }, [white?.keywordReady, black?.keywordReady, me?.isHost, room.id, room.phase, toast]);
+    if (startTried.current) return;
+    startTried.current = true;
+    startFirstRoundIfReady(room.id).catch((e) => {
+      startTried.current = false;
+      console.error("startFirstRound error:", e);
+    });
+  }, [bothReady, room.id, room.phase]);
 
   if (!white || !black || !me?.team) {
-    return <div className="p-4 text-sm text-zinc-400">불러오는 중...</div>;
+    return (
+      <Screen>
+        <div className="p-6 text-sm text-muted">불러오는 중...</div>
+      </Screen>
+    );
   }
 
   const myTeamId: TeamId = me.team;
   const myTeam = myTeamId === "white" ? white : black;
-  const otherTeam = myTeamId === "white" ? black : white;
-  const remaining = 2 - myTeam.shuffleUsedCount;
+  const remaining = Math.max(0, 2 - myTeam.shuffleUsedCount);
   const myReady = myTeam.keywordReady;
-  const otherReady = otherTeam.keywordReady;
+  const notReady = (["white", "black"] as TeamId[]).filter(
+    (t) => !(t === "white" ? white : black).keywordReady
+  );
 
   const handleShuffle = async () => {
-    if (remaining <= 0) {
-      toast.show("이미 모두 사용했어요", "error");
-      return;
-    }
+    if (remaining <= 0) return;
+    setBusy(true);
     try {
       await shuffleTeamKeywords(room.id, myTeamId);
       toast.show("새 키워드를 받았어요", "success");
     } catch (e: any) {
-      toast.show(e.message || "셔플 실패", "error");
+      toast.show(e?.message || "다시 뽑기 실패", "error");
     }
+    setBusy(false);
   };
 
   const handleReady = async () => {
     if (myReady) return;
+    setBusy(true);
     try {
       await markTeamReady(room.id, myTeamId);
     } catch (e: any) {
-      toast.show(e.message || "준비 완료 처리 실패", "error");
+      toast.show(e?.message || "준비 완료 처리 실패", "error");
     }
+    setBusy(false);
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-zinc-50">
-      <div className="w-full max-w-sm bg-white border border-zinc-200 rounded-2xl p-5 shadow-sm">
-        <div className="text-center mb-4">
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-50 text-blue-600 rounded-md text-[11px] mb-2">
-            <Lock className="w-3.5 h-3.5" />우리 팀 전용
-          </div>
-          <div className="text-[17px] font-medium mb-1">우리 팀 키워드</div>
-          <div className="text-xs text-zinc-500">게임 내내 변하지 않습니다</div>
+    <Screen>
+      <StatusBar roundLabel="준비" white={white} black={black} />
+      <MeLine teamId={myTeamId} teamName={myTeam.name} role="우리 팀 키워드 확인" />
+      <div className="flex-1 flex flex-col gap-3 px-4 py-4">
+        <div>
+          <h2 className="font-serif font-black text-[22px]">우리 팀 키워드</h2>
+          <p className="text-[13px] text-muted mt-0.5">
+            상대 팀에게 화면을 보여 주지 마세요. 게임 내내 그대로예요.
+          </p>
         </div>
+        <KeywordGrid keywords={myTeam.keywords} teamId={myTeamId} big />
 
-        <div className="flex items-center gap-2 mb-3 px-1">
-          <div className={`w-2 h-2 rounded-full ${myTeamId === "white" ? "bg-blue-500" : "bg-zinc-700"}`} />
-          <span className="text-xs text-zinc-500">{myTeam.name}</span>
-          <span className="ml-auto text-[11px] text-zinc-400">상대팀에겐 보이지 않음</span>
-        </div>
-
-        <div className="grid grid-cols-2 gap-2 mb-3">
-          {myTeam.keywords.map((kw, i) => (
-            <div
-              key={i}
-              className="bg-white border border-zinc-200 rounded-xl px-3 py-3.5"
-            >
-              <div className="font-mono text-[11px] text-zinc-400 mb-1.5">
-                [ {i + 1} ]
-              </div>
-              <div className="text-[18px] font-medium">{kw}</div>
-            </div>
-          ))}
-        </div>
-
-        <Button
-          variant="outline"
-          className="w-full mb-3"
-          onClick={handleShuffle}
-          disabled={remaining <= 0 || myReady}
-        >
-          <Shuffle className="w-4 h-4" />키워드 다시 뽑기
-          <span className="text-[11px] text-zinc-400 ml-1">남은 횟수 {remaining}</span>
+        <Button variant="outline" className="w-full" onClick={handleShuffle} disabled={remaining <= 0 || myReady || busy}>
+          <Shuffle className="w-4 h-4" />
+          키워드 다시 뽑기 · 남은 횟수 {remaining}
         </Button>
+        <p className="text-xs text-muted text-center">
+          어색한 키워드가 있으면 팀이 의논해서 2번까지 다시 뽑을 수 있어요.
+        </p>
 
-        <div className="flex gap-2 p-2.5 bg-blue-50 rounded-md mb-5">
-          <Info className="w-3.5 h-3.5 text-blue-600 mt-0.5 shrink-0" />
-          <div className="text-xs text-blue-700 leading-relaxed">
-            키워드가 어색하면 최대 2번까지 다시 뽑을 수 있어요. 시작 후엔 바꿀 수 없습니다.
-          </div>
-        </div>
-
-        <Button
-          className="w-full"
-          size="lg"
-          onClick={handleReady}
-          disabled={myReady}
-        >
-          <Check className="w-4 h-4" />{myReady ? "준비 완료됨" : "준비 완료"}
-        </Button>
-
-        <div className="flex gap-1.5 mt-3">
-          <ReadyBadge
-            teamName={white.name}
-            ready={white.keywordReady}
-            color="bg-blue-500"
-          />
-          <ReadyBadge
-            teamName={black.name}
-            ready={black.keywordReady}
-            color="bg-zinc-700"
-          />
+        <div className="mt-auto flex flex-col gap-2">
+          <Button size="lg" className="w-full" onClick={handleReady} disabled={myReady || busy}>
+            <Check className="w-4 h-4" />
+            {myReady ? "준비 완료됨" : "우리 팀 준비 완료"}
+          </Button>
+          <WaitLine tone={notReady.length ? "red" : "ok"}>
+            {notReady.length ? (
+              <>
+                기다리는 중:{" "}
+                <b className="font-black">
+                  {nameList(notReady.map((t) => (t === "white" ? white : black).name))}
+                </b>
+                {" "}준비
+              </>
+            ) : (
+              "1라운드 시작하는 중…"
+            )}
+          </WaitLine>
         </div>
       </div>
-    </div>
-  );
-}
-
-function ReadyBadge({
-  teamName,
-  ready,
-  color,
-}: {
-  teamName: string;
-  ready: boolean;
-  color: string;
-}) {
-  return (
-    <div className="flex-1 px-2.5 py-2 bg-white border border-zinc-200 rounded-md flex items-center gap-1.5 text-[11px]">
-      <div className={`w-1.5 h-1.5 rounded-full ${color}`} />
-      <span className="text-zinc-500 truncate">{teamName}</span>
-      <span className={`ml-auto ${ready ? "text-green-600" : "text-zinc-400"}`}>
-        {ready ? "완료" : "대기 중"}
-      </span>
-    </div>
+    </Screen>
   );
 }

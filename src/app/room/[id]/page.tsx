@@ -18,6 +18,8 @@ import RulesIntro from "@/components/game/RulesIntro";
 import KeywordReveal from "@/components/game/KeywordReveal";
 import RoundPlay from "@/components/game/RoundPlay";
 import EndedScreen from "@/components/game/EndedScreen";
+import TiebreakScreen from "@/components/game/TiebreakScreen";
+import { Screen } from "@/components/game/ui";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
@@ -102,8 +104,7 @@ export default function RoomPage() {
   }, [roomId, myUid, meInRoom]);
 
   // 말랑월드 방장: h{room} 방을 이번 판(sid)으로 만들기 (멱등 트랜잭션)
-  // 기본 설정: 온라인(채팅) + 표준 — 각자 폰으로 들어오므로 '팀당 폰 1대'인 오프라인은 맞지 않음.
-  // 대기실에서 방장이 바꿀 수 있음.
+  // 모두 같은 방에서 각자 폰으로 (채팅 없음, 말로 의논). 예전 판에서 본 키워드는 이어받음
   useEffect(() => {
     if (!hub || !hub.host || !myUid) return;
     const key = `${hub.sid}:${myUid}`;
@@ -118,8 +119,6 @@ export default function RoomPage() {
           uid: myUid,
           nickname: hub.name,
           hubUid: hub.uid,
-          connectMode: "online",
-          gameMode: "standard",
         });
         localStorage.setItem(`room:${roomId}`, "1");
         setHubHostDone(true);
@@ -177,9 +176,9 @@ export default function RoomPage() {
   // 로딩 중
   if (!loaded || !myUid || !hubChecked) {
     return (
-      <div className="min-h-screen flex items-center justify-center text-zinc-400 text-sm">
-        불러오는 중...
-      </div>
+      <Screen>
+        <div className="flex-1 flex items-center justify-center text-muted text-sm">불러오는 중...</div>
+      </Screen>
     );
   }
 
@@ -196,17 +195,11 @@ export default function RoomPage() {
   // 방이 존재하지 않음
   if (!room) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-4 bg-zinc-50">
-        <div className="w-full max-w-sm bg-white border border-zinc-200 rounded-2xl p-6 shadow-sm text-center">
-          <div className="text-base font-medium mb-1.5">방을 찾을 수 없어요</div>
-          <div className="text-xs text-zinc-500 mb-4">
-            방이 사라졌거나 잘못된 링크예요
-          </div>
-          <Button className="w-full" onClick={() => router.push("/")}>
-            메인으로
-          </Button>
-        </div>
-      </div>
+      <Notice title="방을 찾을 수 없어요" desc="방이 사라졌거나 잘못된 링크예요">
+        <Button className="w-full" onClick={() => router.push("/")}>
+          메인으로
+        </Button>
+      </Notice>
     );
   }
 
@@ -222,69 +215,42 @@ export default function RoomPage() {
     // 이미 시작된 게임에는 참가 불가
     if (room.phase !== "waiting") {
       return (
-        <div className="min-h-screen flex items-center justify-center p-4 bg-zinc-50">
-          <div className="w-full max-w-sm bg-white border border-zinc-200 rounded-2xl p-6 shadow-sm text-center">
-            <div className="text-base font-medium mb-1.5">
-              이미 시작된 게임이에요
-            </div>
-            <div className="text-xs text-zinc-500 mb-4">
-              게임이 진행 중이라 참가할 수 없어요
-            </div>
-            <Button className="w-full" onClick={() => router.push("/")}>
-              메인으로
-            </Button>
-          </div>
-        </div>
+        <Notice title="이미 시작된 게임이에요" desc="게임이 진행 중이라 참가할 수 없어요">
+          <Button className="w-full" onClick={() => router.push("/")}>
+            메인으로
+          </Button>
+        </Notice>
       );
     }
 
     return (
-      <div className="min-h-screen flex items-center justify-center p-4 bg-zinc-50">
-        <div className="w-full max-w-sm bg-white border border-zinc-200 rounded-2xl p-6 shadow-sm">
-          <div className="text-center mb-5">
-            <div className="font-mono text-[22px] font-medium tracking-[0.15em]">
-              DECRYPTO
-            </div>
-            <div className="text-[13px] text-zinc-500 mt-1">방에 참가하기</div>
-          </div>
-
-          <div className="bg-zinc-50 rounded-lg p-3 mb-4 text-center">
-            <div className="text-[11px] text-zinc-500 mb-0.5">방 코드</div>
-            <div className="font-mono text-[20px] font-medium tracking-[0.2em]">
-              {room.code}
-            </div>
-          </div>
-
-          <label className="block text-[13px] text-zinc-600 mb-1.5">닉네임</label>
-          <Input
-            placeholder="이름을 입력하세요"
-            value={nickname}
-            onChange={(e) => setNickname(e.target.value)}
-            maxLength={12}
-            selectOnFocus
-            className="mb-3"
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleJoin();
-            }}
-          />
-
-          <Button
-            className="w-full"
-            size="lg"
-            onClick={handleJoin}
-            disabled={joining}
-          >
-            {joining ? "참가 중..." : "참가하기"}
-          </Button>
-
-          <button
-            className="w-full text-center text-xs text-zinc-400 mt-3 py-2"
-            onClick={() => router.push("/")}
-          >
-            메인으로 돌아가기
-          </button>
+      <Notice title="방에 참가하기" desc="">
+        <div className="bg-paper rounded-xl p-3 mb-4 text-center">
+          <div className="text-[11px] tracking-[0.2em] font-bold text-muted mb-0.5">방 코드</div>
+          <div className="font-mono font-bold text-[24px] tracking-[0.2em]">{room.code}</div>
         </div>
-      </div>
+        <label className="block text-[13px] font-bold text-muted mb-1.5 text-left">닉네임</label>
+        <Input
+          placeholder="이름을 입력하세요"
+          value={nickname}
+          onChange={(e) => setNickname(e.target.value)}
+          maxLength={12}
+          selectOnFocus
+          className="mb-3"
+          onKeyDown={(e) => {
+            if (e.key === "Enter") handleJoin();
+          }}
+        />
+        <Button className="w-full" size="lg" onClick={handleJoin} disabled={joining}>
+          {joining ? "참가 중..." : "참가하기"}
+        </Button>
+        <button
+          className="w-full text-center text-xs text-muted mt-3 py-2"
+          onClick={() => router.push("/")}
+        >
+          메인으로 돌아가기
+        </button>
+      </Notice>
     );
   }
 
@@ -295,40 +261,62 @@ export default function RoomPage() {
     case "team_setup":
       return <TeamSetup room={room} players={players} me={me} />;
     case "rules":
-      return <RulesIntro room={room} me={me} />;
+      return <RulesIntro room={room} players={players} me={me} />;
     case "keyword_reveal":
       return <KeywordReveal room={room} players={players} me={me} />;
     case "round_in_progress":
       return <RoundPlay room={room} players={players} me={me} />;
+    case "tiebreak":
+      return <TiebreakScreen room={room} players={players} me={me} />;
     case "ended":
       return <EndedScreen room={room} players={players} me={me} />;
     default:
-      return <div>알 수 없는 상태</div>;
+      return (
+        <Notice title="알 수 없는 상태" desc="새로고침해 주세요">
+          <Button className="w-full" onClick={() => window.location.reload()}>
+            새로고침
+          </Button>
+        </Notice>
+      );
   }
+}
+
+// 가운데 카드 하나짜리 안내 화면
+function Notice({
+  title,
+  desc,
+  children,
+}: {
+  title: string;
+  desc: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <Screen>
+      <div className="flex-1 flex items-center justify-center p-5">
+        <div className="w-full bg-white border-[1.5px] border-line rounded-[20px] p-6 text-center">
+          <div className="font-mono font-bold text-[13px] tracking-[0.3em] text-muted mb-2">DECRYPTO</div>
+          <div className="font-serif font-black text-[22px] mb-1.5">{title}</div>
+          {desc && <div className="text-[13px] text-muted mb-4">{desc}</div>}
+          {children}
+        </div>
+      </div>
+    </Screen>
+  );
 }
 
 // 말랑월드 자동 입장 대기 화면
 function HubWait({ text, error }: { text: string; error: string }) {
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-zinc-50">
-      <div className="w-full max-w-sm bg-white border border-zinc-200 rounded-2xl p-6 shadow-sm text-center">
-        <div className="font-mono text-[22px] font-medium tracking-[0.15em] mb-3">
-          DECRYPTO
-        </div>
-        <div className="text-sm text-zinc-500">{text}</div>
-        {error && (
-          <>
-            <div className="text-xs text-red-500 mt-3">{error}</div>
-            <Button
-              className="w-full mt-4"
-              variant="outline"
-              onClick={() => window.location.reload()}
-            >
-              다시 시도
-            </Button>
-          </>
-        )}
-      </div>
-    </div>
+    <Notice title={text} desc="">
+      {error && (
+        <>
+          <div className="text-[13px] font-bold text-stamp mt-1">{error}</div>
+          <Button className="w-full mt-4" variant="outline" onClick={() => window.location.reload()}>
+            다시 시도
+          </Button>
+        </>
+      )}
+    </Notice>
   );
 }

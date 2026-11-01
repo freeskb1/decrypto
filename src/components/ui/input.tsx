@@ -2,8 +2,7 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
-export interface InputProps
-  extends React.InputHTMLAttributes<HTMLInputElement> {
+export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   selectOnFocus?: boolean;
 }
 
@@ -13,7 +12,7 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
       <input
         ref={ref}
         className={cn(
-          "w-full px-3 py-2 text-sm bg-white border border-zinc-300 rounded-lg outline-none transition-colors focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:bg-zinc-100 disabled:cursor-not-allowed",
+          "w-full px-3 py-2.5 text-base bg-white border-[1.5px] border-line rounded-xl outline-none transition-colors placeholder:text-hint focus:border-ink disabled:bg-paper disabled:text-muted disabled:cursor-not-allowed",
           className
         )}
         onFocus={(e) => {

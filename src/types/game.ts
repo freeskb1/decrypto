@@ -1,20 +1,40 @@
-// Firestore 데이터 구조 타입 정의
+// Realtime Database 데이터 구조 타입 정의
 
 export type TeamId = "white" | "black";
 export type GamePhase =
-  | "waiting"           // 대기실
-  | "team_setup"        // 팀 배정 후 팀명 설정
-  | "rules"             // 금지사항 안내
-  | "keyword_reveal"    // 키워드 공개
+  | "waiting" // 대기실
+  | "team_setup" // 팀 배정 후 팀명 설정
+  | "rules" // 금지사항 안내
+  | "keyword_reveal" // 키워드 공개
   | "round_in_progress" // 라운드 진행 중
-  | "ended";            // 종료
+  | "tiebreak" // 동점 → 상대 키워드 맞히기
+  | "ended"; // 종료
+
+// 한 라운드 진행 순서 (공식 룰: 팀별로 차례대로 해결)
+// 암호 만들기 → 흰팀 단서 공개 → 검은팀 가로채기(2라운드부터) → 흰팀 해독 → 다 같이 공개
+//            → 검은팀 단서 공개 → 흰팀 가로채기(2라운드부터) → 검은팀 해독 → 다 같이 공개 → 라운드 끝 판정
 export type RoundStage =
-  | "announce"   // 단계 A: 암호전달자 발표
-  | "encrypting" // 단계 B: 단서 작성
-  | "guessing"   // 단계 C: 자기 팀 추측
-  | "own_result" // 단계 D-1: 자기 팀 결과
-  | "intercept"  // 단계 D-2: 상대팀 가로채기
-  | "settled";   // 라운드 정산 끝
+  | "encrypting"
+  | "white_intercept"
+  | "white_decode"
+  | "white_reveal"
+  | "black_intercept"
+  | "black_decode"
+  | "black_reveal"
+  | "settled";
+
+export const STAGE_ORDER: RoundStage[] = [
+  "encrypting",
+  "white_intercept",
+  "white_decode",
+  "white_reveal",
+  "black_intercept",
+  "black_decode",
+  "black_reveal",
+  "settled",
+];
+
+// 예전 데이터 호환용으로만 남겨 둠 (지금은 항상 standard / offline)
 export type GameMode = "standard" | "duel";
 export type ConnectMode = "online" | "offline";
 
@@ -38,10 +58,8 @@ export interface TeamState {
   playerOrder: string[]; // uid 순서
   currentEncryptorIdx: number;
   // 코드별 누적 단서: {1: ["빨강","과일"], 2: [...], 3: [...], 4: [...]}
+  // 그 팀 암호가 "공개"된 뒤에만 쌓인다
   clueAccumulation: Record<string, string[]>;
-  // 결과 화면 완료 상태
-  ownResultAcked: boolean;
-  interceptAcked: boolean;
   // 키워드 공개 화면에서 준비 완료
   keywordReady: boolean;
 }
@@ -51,12 +69,20 @@ export interface RoundTeamData {
   code: number[]; // 3자리, 1~4 중복없음
   clues: string[]; // 3개
   cluesSubmittedAt: number | null;
-  ownGuess: number[] | null; // 자기 팀 추측
+  ownGuess: number[] | null; // 자기 팀 해독
   ownGuessAt: number | null;
   ownCorrect: boolean | null;
-  interceptGuess: number[] | null; // 상대팀이 우리에 대해 가로채기 시도
+  interceptGuess: number[] | null; // 상대팀이 이 팀 암호를 가로채려 한 답
   interceptGuessAt: number | null;
   intercepted: boolean | null;
+}
+
+// 팀이 같이 고르는 답안 (공유 초안)
+export interface GuessDraft {
+  picks: number[]; // 3칸, 0 = 비어 있음
+  editorUid: string;
+  editorName: string;
+  at: number;
 }
 
 export interface Round {
@@ -65,18 +91,20 @@ export interface Round {
   black: RoundTeamData;
   status: "in_progress" | "completed";
   stage: RoundStage;
-  // 단계 B 타이머: 먼저 끝낸 팀 기준
+  // 먼저 단서를 낸 쪽이 생기면 시각 기록 → 다른 암호전달자에게 30초
   encryptingTimerStartAt: number | null;
+  // 공개 화면 확인: acks[팀][uid] = true
+  acks: Record<string, Record<string, boolean>>;
+  // 공유 초안: drafts["white_intercept"] 등
+  drafts: Record<string, GuessDraft>;
 }
 
-export interface ChatMessage {
-  id: string;
-  senderUid: string;
-  senderNickname: string;
-  team: TeamId | null;
-  scope: "team" | "all";
-  text: string;
-  createdAt: number;
+export interface TiebreakState {
+  prefix: string; // 끝난 이유 앞부분 (예: "8라운드 종료 · 점수 +1 vs +1")
+  white: string[] | null; // 흰팀이 적은 검은팀 키워드 4개
+  black: string[] | null; // 검은팀이 적은 흰팀 키워드 4개
+  whiteBy: string; // 제출한 사람 이름
+  blackBy: string;
 }
 
 export interface Room {
@@ -89,11 +117,66 @@ export interface Room {
   phase: GamePhase;
   roundNumber: number; // 0이면 시작 전, 1~8
   winner: TeamId | "draw" | null;
+  endReason: string | null;
+  tiebreak: TiebreakState | null;
   hubSid?: string; // 말랑월드 판 id (말랑월드에서 만든 방만)
   hubHostUid?: string; // 말랑월드 방장 uid
+}
+
+export const MIN_PLAYERS = 4;
+export const MAX_PLAYERS = 8;
+export const MAX_ROUNDS = 8;
+export const TIMER_SECONDS = 30;
+
+export function otherTeamOf(t: TeamId): TeamId {
+  return t === "white" ? "black" : "white";
+}
+
+export function defaultTeamName(t: TeamId): string {
+  return t === "white" ? "흰팀" : "검은팀";
+}
+
+export function stageIndex(stage: RoundStage | string | null | undefined): number {
+  const i = STAGE_ORDER.indexOf(stage as RoundStage);
+  return i < 0 ? 0 : i;
+}
+
+// 이 팀 단서가 모두에게 공개됐는지 (그 팀 차례가 시작된 뒤)
+export function cluesPublic(round: Round, team: TeamId): boolean {
+  if (round.status === "completed") return true;
+  const first = team === "white" ? "white_intercept" : "black_intercept";
+  return stageIndex(round.stage) >= stageIndex(first);
+}
+
+// 이 팀 암호(정답)가 공개됐는지
+export function codeRevealed(round: Round, team: TeamId): boolean {
+  if (round.status === "completed") return true;
+  return stageIndex(round.stage) >= stageIndex(`${team}_reveal`);
 }
 
 // 단서 정규화 (재사용 체크용): 공백 제거 + 소문자
 export function normalizeClue(clue: string): string {
   return clue.trim().toLowerCase().replace(/\s+/g, "");
+}
+
+// 단서 검사: 문제가 있으면 안내 문구, 없으면 null
+export function validateClues(
+  clues: string[],
+  keywords: string[],
+  previousClues: string[]
+): string | null {
+  if (clues.length !== 3 || clues.some((c) => !c || !c.trim())) {
+    return "단서 3개를 모두 입력해주세요";
+  }
+  const kw = new Set(keywords.map(normalizeClue));
+  const prev = new Set(previousClues.map(normalizeClue));
+  const seen = new Set<string>();
+  for (const c of clues) {
+    const n = normalizeClue(c);
+    if (kw.has(n)) return `"${c.trim()}"은(는) 우리 키워드 자체라 쓸 수 없어요`;
+    if (seen.has(n)) return `"${c.trim()}"을(를) 두 번 썼어요`;
+    if (prev.has(n)) return `"${c.trim()}"은(는) 우리 팀이 이미 쓴 단서예요`;
+    seen.add(n);
+  }
+  return null;
 }

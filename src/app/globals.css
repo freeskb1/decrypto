@@ -2,32 +2,63 @@
 @tailwind components;
 @tailwind utilities;
 
-@import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css");
-
 :root {
-  --bg: #fafafa;
-  --fg: #18181b;
+  --desk: #e9e4d8;
+  --paper: #fbf8f1;
+  --ink: #1e2433;
+  color-scheme: light;
 }
 
-html, body {
-  font-family: "Pretendard", -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif;
-  background: var(--bg);
-  color: var(--fg);
+html,
+body {
+  font-family: "Noto Sans KR", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  background: var(--desk);
+  color: var(--ink);
+  word-break: keep-all;
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
 }
 
 /* 모바일 키보드 올라올 때 안정성 */
-html, body {
+html,
+body {
   overscroll-behavior: none;
 }
 
+/* 서류 종이 줄무늬 */
+.paper-lines {
+  background-color: var(--paper);
+  background-image: repeating-linear-gradient(
+    0deg,
+    transparent 0 27px,
+    rgba(30, 36, 51, 0.035) 27px 28px
+  );
+}
+
 @keyframes pulse-dot {
-  0%, 100% { opacity: 0.3; }
-  50% { opacity: 1; }
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 .pulse-dot {
   animation: pulse-dot 1.4s infinite;
+}
+
+/* 도장 */
+.stamp-mark {
+  transform: rotate(12deg);
+}
+
+/* 누르고 있는 동안만 보이는 암호: 길게 눌러도 선택/메뉴가 안 뜨게 */
+.no-callout {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
 }
 
 /* 스크롤바 숨김 */

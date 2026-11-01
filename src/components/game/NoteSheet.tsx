@@ -1,350 +1,147 @@
 "use client";
 import { useEffect, useState } from "react";
-import { getAllRounds } from "@/lib/game";
+import { subscribeAllRounds } from "@/lib/game";
 import type { Room, TeamState, TeamId, Round } from "@/types/game";
-import { X, Lock, Eye } from "lucide-react";
+import { cluesPublic, codeRevealed, otherTeamOf, MAX_ROUNDS } from "@/types/game";
+import { cn } from "@/lib/utils";
+import { ClueHistory, KeywordGrid } from "./ui";
 
+// 기록지: 공개된 것만 보여 준다 (이번 라운드 암호는 공개 전까지 숨김)
 export default function NoteSheet({
   room,
-  myTeam,
-  otherTeam,
+  white,
+  black,
   myTeamId,
   onClose,
   reveal = false,
 }: {
   room: Room;
-  myTeam: TeamState;
-  otherTeam: TeamState;
+  white: TeamState;
+  black: TeamState;
   myTeamId: TeamId;
   onClose: () => void;
   reveal?: boolean;
 }) {
-  const [tab, setTab] = useState<"mine" | "other">("mine");
+  const [tab, setTab] = useState<TeamId>(myTeamId);
   const [rounds, setRounds] = useState<Round[]>([]);
 
   useEffect(() => {
-    getAllRounds(room.id).then(setRounds);
-  }, [room.id, room.roundNumber]);
+    const unsub = subscribeAllRounds(room.id, setRounds);
+    return () => unsub();
+  }, [room.id]);
 
-  const otherTeamId: TeamId = myTeamId === "white" ? "black" : "white";
+  const team = tab === "white" ? white : black;
+  const isMine = tab === myTeamId;
+  const showKeywords = isMine || reveal;
 
   return (
-    <div
-      className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
-      onClick={onClose}
-    >
+    <div className="fixed inset-0 bg-ink/50 z-50 flex items-end sm:items-center justify-center" onClick={onClose}>
       <div
-        className="w-full max-w-sm bg-white border border-zinc-200 rounded-2xl p-5 shadow-lg max-h-[90vh] overflow-y-auto"
+        className="paper-lines w-full max-w-md rounded-t-[24px] sm:rounded-[24px] px-4 pt-4 pb-6 max-h-[90dvh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* 헤더 */}
-        <div className="flex items-center gap-2 mb-4">
-          <button className="p-1.5 hover:bg-zinc-100 rounded" onClick={onClose}>
-            <X className="w-4 h-4" />
+        <div className="flex items-center gap-2 mb-3">
+          <div className="font-serif font-black text-[20px]">기록지</div>
+          <span className="font-mono text-xs text-muted">
+            R{room.roundNumber} / {MAX_ROUNDS}
+          </span>
+          <button
+            className="ml-auto rounded-lg border-[1.5px] border-line bg-white px-3 py-1.5 text-xs font-black"
+            onClick={onClose}
+          >
+            닫기
           </button>
-          <div className="text-[15px] font-medium">기록지</div>
-          <div className="ml-auto font-mono text-[11px] text-zinc-400">
-            ROUND {String(room.roundNumber).padStart(2, "0")} / 08
+        </div>
+
+        <div className="flex gap-1.5 mb-3">
+          {(["white", "black"] as TeamId[]).map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={cn(
+                "flex-1 rounded-xl py-2.5 text-sm font-black border-[1.5px]",
+                tab === t
+                  ? t === "white"
+                    ? "bg-wt text-wt-ink border-wt-ink"
+                    : "bg-bt text-bt-ink border-bt"
+                  : "bg-white text-muted border-line"
+              )}
+            >
+              {(t === "white" ? white : black).name}
+              {t === myTeamId ? " (우리)" : ""}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex flex-col gap-3">
+          <div>
+            <div className="text-xs font-bold text-muted mb-1.5 px-1">
+              {team.name} 키워드 {showKeywords ? "" : "· 게임이 끝나면 공개"}
+            </div>
+            <KeywordGrid keywords={showKeywords ? team.keywords : ["???", "???", "???", "???"]} teamId={tab} />
+          </div>
+
+          <ClueHistory title="번호별 단서 (공개된 것만)" accumulation={team.clueAccumulation} />
+
+          <div className="bg-white border-[1.5px] border-line rounded-2xl py-1">
+            <div className="grid grid-cols-[28px_1fr_44px_44px_36px] gap-1.5 px-3 py-1.5 border-b border-line text-[10px] font-bold text-muted">
+              <span>#</span>
+              <span>단서</span>
+              <span className="text-center">{otherTeamOf(tab) === myTeamId ? "우리 가로" : "가로채기"}</span>
+              <span className="text-center">해독</span>
+              <span className="text-center">정답</span>
+            </div>
+            {rounds.length === 0 && (
+              <div className="text-xs text-muted text-center py-3">아직 기록이 없어요</div>
+            )}
+            {rounds.map((r) => {
+              const d = r[tab];
+              const showClues = cluesPublic(r, tab) && d.clues.length > 0;
+              const showCode = codeRevealed(r, tab);
+              return (
+                <div key={r.roundNumber} className="px-3 py-1.5 border-b border-line last:border-b-0">
+                  {!showClues ? (
+                    <div className="grid grid-cols-[28px_1fr] gap-1.5 text-xs text-muted py-0.5">
+                      <span className="font-mono">{String(r.roundNumber).padStart(2, "0")}</span>
+                      <span>공개 전</span>
+                    </div>
+                  ) : (
+                    d.clues.map((clue, i) => {
+                      const ig = showCode ? d.interceptGuess?.[i] : undefined;
+                      const og = showCode ? d.ownGuess?.[i] : undefined;
+                      return (
+                        <div
+                          key={i}
+                          className="grid grid-cols-[28px_1fr_44px_44px_36px] gap-1.5 items-center py-0.5 text-[13px]"
+                        >
+                          <span className="font-mono text-[11px] text-muted">
+                            {i === 0 ? String(r.roundNumber).padStart(2, "0") : ""}
+                          </span>
+                          <span className="font-bold truncate">{clue}</span>
+                          <Cell value={r.roundNumber === 1 ? undefined : ig} ok={ig === d.code[i]} />
+                          <Cell value={og} ok={og === d.code[i]} />
+                          <span className="font-mono font-bold text-center">
+                            {showCode ? d.code[i] : "?"}
+                          </span>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
-
-        {/* 탭 */}
-        <div className="flex gap-1 bg-zinc-50 rounded-md p-0.5 mb-3 border border-zinc-200">
-          <button
-            onClick={() => setTab("mine")}
-            className={`flex-1 py-2 text-xs flex items-center justify-center gap-1.5 rounded ${
-              tab === "mine"
-                ? "font-medium bg-white border border-zinc-200"
-                : "text-zinc-500"
-            }`}
-          >
-            <div className="w-2 h-2 rounded-full bg-blue-500" />
-            우리팀
-          </button>
-          <button
-            onClick={() => setTab("other")}
-            className={`flex-1 py-2 text-xs flex items-center justify-center gap-1.5 rounded ${
-              tab === "other"
-                ? "font-medium bg-white border border-zinc-200"
-                : "text-zinc-500"
-            }`}
-          >
-            <div className="w-2 h-2 rounded-full bg-zinc-700" />
-            상대팀
-          </button>
-        </div>
-
-        {tab === "mine" ? (
-          <MineTab myTeam={myTeam} rounds={rounds} myTeamId={myTeamId} />
-        ) : (
-          <OtherTab
-            otherTeam={otherTeam}
-            rounds={rounds}
-            otherTeamId={otherTeamId}
-            reveal={reveal}
-          />
-        )}
       </div>
     </div>
   );
 }
 
-function MineTab({
-  myTeam,
-  rounds,
-  myTeamId,
-}: {
-  myTeam: TeamState;
-  rounds: Round[];
-  myTeamId: TeamId;
-}) {
+function Cell({ value, ok }: { value: number | undefined; ok: boolean }) {
+  if (value === undefined) {
+    return <span className="font-mono text-center text-hint">—</span>;
+  }
   return (
-    <>
-      {/* 키워드 */}
-      <div className="bg-white border border-zinc-200 rounded-xl p-2.5 mb-3">
-        <div className="text-[10px] text-zinc-500 mb-1.5">우리 팀 키워드</div>
-        <div className="grid grid-cols-4 gap-1">
-          {myTeam.keywords.map((kw, i) => (
-            <div
-              key={i}
-              className="text-center p-1 bg-zinc-50 rounded-md"
-            >
-              <div className="font-mono text-[9px] text-zinc-400">{i + 1}</div>
-              <div className="text-[12px] font-medium truncate">{kw}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* 라운드별 */}
-      <div className="bg-white border border-zinc-200 rounded-xl py-1 mb-3">
-        <div className="grid grid-cols-[24px_1fr_30px_30px] gap-1.5 px-3 py-1.5 border-b border-zinc-200 text-[9px] text-zinc-400">
-          <span>#</span>
-          <span>단서</span>
-          <span className="text-center">추측</span>
-          <span className="text-center">정답</span>
-        </div>
-
-        {rounds.length === 0 && (
-          <div className="text-[11px] text-zinc-400 text-center py-3">
-            기록이 없어요
-          </div>
-        )}
-
-        {rounds.map((round) => {
-          const data = round[myTeamId];
-          return (
-            <div
-              key={round.roundNumber}
-              className="px-3 py-2 border-b border-zinc-200 last:border-b-0"
-            >
-              {data.clues.length > 0 ? (
-                data.clues.map((clue, i) => {
-                  const ok = data.ownGuess?.[i] === data.code[i];
-                  return (
-                    <div
-                      key={i}
-                      className="grid grid-cols-[24px_1fr_30px_30px] gap-1.5 items-center py-0.5"
-                    >
-                      <div className="font-mono text-[11px] text-zinc-400">
-                        {i === 0 ? String(round.roundNumber).padStart(2, "0") : ""}
-                      </div>
-                      <span className="text-[12px] truncate">{clue}</span>
-                      <span
-                        className={`font-mono text-[11px] text-center ${
-                          data.ownGuess
-                            ? ok
-                              ? "text-green-600"
-                              : "text-red-500"
-                            : "text-zinc-400"
-                        }`}
-                      >
-                        {data.ownGuess?.[i] ?? "—"}
-                      </span>
-                      <span className="font-mono text-[11px] text-center">
-                        {data.code[i]}
-                      </span>
-                    </div>
-                  );
-                })
-              ) : (
-                <div className="text-[11px] text-zinc-400 text-center py-1">
-                  진행 예정
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      {/* 코드별 누적 단서 */}
-      <div className="bg-white border border-zinc-200 rounded-xl p-2.5">
-        <div className="text-[10px] text-zinc-500 mb-2">코드별 누적 단서</div>
-        <div className="grid grid-cols-4 gap-1.5">
-          {[1, 2, 3, 4].map((n) => (
-            <div
-              key={n}
-              className="bg-zinc-50 rounded-md p-1.5 text-center"
-            >
-              <div className="font-mono text-[10px] text-zinc-400 pb-1 mb-1 border-b border-zinc-200">
-                {n}번
-              </div>
-              <div className="flex flex-col gap-0.5">
-                {(myTeam.clueAccumulation[String(n)] || []).map((c, i) => (
-                  <div key={i} className="text-[11px] text-zinc-500 truncate">
-                    {c}
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </>
-  );
-}
-
-function OtherTab({
-  otherTeam,
-  rounds,
-  otherTeamId,
-  reveal,
-}: {
-  otherTeam: TeamState;
-  rounds: Round[];
-  otherTeamId: TeamId;
-  reveal: boolean;
-}) {
-  return (
-    <>
-      {/* 상대 키워드 (가림) */}
-      <div className="bg-white border border-zinc-200 rounded-xl p-2.5 mb-3">
-        <div className="flex items-center gap-1.5 mb-1.5">
-          {reveal ? (
-            <Eye className="w-3 h-3 text-green-600" />
-          ) : (
-            <Lock className="w-3 h-3 text-zinc-400" />
-          )}
-          <span className="text-[10px] text-zinc-500">상대 팀 키워드</span>
-          <span
-            className={`ml-auto text-[9px] px-1.5 py-0.5 rounded ${
-              reveal
-                ? "bg-green-50 text-green-700"
-                : "bg-zinc-100 text-zinc-400"
-            }`}
-          >
-            {reveal ? "공개" : "게임 종료 시 공개"}
-          </span>
-        </div>
-        <div className="grid grid-cols-4 gap-1">
-          {otherTeam.keywords.map((kw, i) => (
-            <div
-              key={i}
-              className="text-center p-1 bg-zinc-50 rounded-md"
-            >
-              <div className="font-mono text-[9px] text-zinc-400">{i + 1}</div>
-              <div
-                className={`text-[12px] truncate ${
-                  reveal ? "font-medium" : "font-mono text-zinc-400"
-                }`}
-              >
-                {reveal ? kw : "???"}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* 라운드별 */}
-      <div className="bg-white border border-zinc-200 rounded-xl py-1 mb-3">
-        <div className="grid grid-cols-[24px_1fr_36px_30px] gap-1.5 px-3 py-1.5 border-b border-zinc-200 text-[9px] text-zinc-400">
-          <span>#</span>
-          <span>단서</span>
-          <span className="text-center">가로채기</span>
-          <span className="text-center">정답</span>
-        </div>
-
-        {rounds.length === 0 && (
-          <div className="text-[11px] text-zinc-400 text-center py-3">
-            기록이 없어요
-          </div>
-        )}
-
-        {rounds.map((round) => {
-          const data = round[otherTeamId];
-          const isFirst = round.roundNumber === 1;
-          return (
-            <div
-              key={round.roundNumber}
-              className="px-3 py-2 border-b border-zinc-200 last:border-b-0"
-            >
-              {data.clues.length > 0 ? (
-                data.clues.map((clue, i) => {
-                  const guess = data.interceptGuess?.[i];
-                  const ok = guess === data.code[i];
-                  return (
-                    <div
-                      key={i}
-                      className="grid grid-cols-[24px_1fr_36px_30px] gap-1.5 items-center py-0.5"
-                    >
-                      <div className="font-mono text-[11px] text-zinc-400">
-                        {i === 0 ? String(round.roundNumber).padStart(2, "0") : ""}
-                      </div>
-                      <span className="text-[12px] truncate">{clue}</span>
-                      <span
-                        className={`font-mono text-[11px] text-center ${
-                          isFirst
-                            ? "text-zinc-400"
-                            : guess !== undefined && guess !== null
-                            ? ok
-                              ? "text-green-600"
-                              : "text-red-500"
-                            : "text-zinc-400"
-                        }`}
-                      >
-                        {isFirst ? "—" : guess ?? "—"}
-                      </span>
-                      <span className="font-mono text-[11px] text-center">
-                        {data.code[i] ?? "?"}
-                      </span>
-                    </div>
-                  );
-                })
-              ) : (
-                <div className="text-[11px] text-zinc-400 text-center py-1">
-                  진행 예정
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      {/* 누적 단서 */}
-      <div className="bg-white border border-zinc-200 rounded-xl p-2.5">
-        <div className="text-[10px] text-zinc-500 mb-2">
-          상대 코드별 누적 단서 (추리용)
-        </div>
-        <div className="grid grid-cols-4 gap-1.5">
-          {[1, 2, 3, 4].map((n) => (
-            <div
-              key={n}
-              className="bg-zinc-50 rounded-md p-1.5 text-center"
-            >
-              <div className="font-mono text-[10px] text-zinc-400 pb-1 mb-1 border-b border-zinc-200">
-                {n}번
-              </div>
-              <div className="flex flex-col gap-0.5">
-                {(otherTeam.clueAccumulation[String(n)] || []).map((c, i) => (
-                  <div key={i} className="text-[11px] text-zinc-500 truncate">
-                    {c}
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </>
+    <span className={cn("font-mono font-bold text-center", ok ? "text-ok" : "text-stamp")}>{value}</span>
   );
 }
