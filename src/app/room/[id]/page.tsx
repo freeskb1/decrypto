@@ -42,8 +42,6 @@ export default function RoomPage() {
   const [hubChecked, setHubChecked] = useState(false);
   const [hubHostDone, setHubHostDone] = useState(false);
   const [hubError, setHubError] = useState("");
-  // 이 화면을 연 시각: 그 뒤에 방장이 새로 만든 방이면 내 sid가 예전 것이어도 그 판으로 들어간다
-  const openedAtRef = useRef<number>(Date.now());
   const hubHostRef = useRef<string | null>(null);
   const hubJoinRef = useRef<string | null>(null);
 
@@ -131,17 +129,14 @@ export default function RoomPage() {
     })();
   }, [hub, myUid, roomId]);
 
-  // 멤버가 받은 sid가 방장 것과 다를 때(같은 브라우저 탭, 말랑월드에서 다시 시작 등):
-  // 이 화면을 연 뒤에 방장이 새로 만든 대기실이면 그 판으로 본다
+  // 멤버가 받은 sid가 방 sid와 달라도(새로고침해서 예전 주소, 같은 브라우저 탭, 말랑월드에서 다시 시작 등)
+  // 그 말랑월드 방(h{번호})이 아직 대기실이면 그 판으로 들어간다. 이미 들어가 있는 방이면 그대로 보여준다.
+  // 방 키가 말랑월드 방 번호라서 대기실이면 지금 판이 맞다 (예전 판이 끝난 방은 대기실이 아님)
   const hubMatches =
     !!hub &&
     !!room &&
     (room.hubSid === hub.sid ||
-      (!hub.host &&
-        room.phase === "waiting" &&
-        !!room.hubSid &&
-        typeof room.createdAt === "number" &&
-        room.createdAt >= openedAtRef.current - 5000));
+      (!hub.host && !!room.hubSid && (room.phase === "waiting" || meInRoom)));
   const roomSid = hubMatches && room ? room.hubSid || "" : "";
 
   // 말랑월드 멤버(및 방장 예외 상황): 이번 판 방이 생기면 자동 입장 (이미 있으면 건너뜀)
