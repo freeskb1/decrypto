@@ -148,7 +148,7 @@ function EncryptorView({
               placeholder={
                 holding
                   ? `${myRound.code[i]}번 「${myTeam.keywords[myRound.code[i] - 1] || ""}」 단서`
-                  : `${i + 1}번째 단서`
+                  : "단서 입력"
               }
               maxLength={20}
               className="border-0 px-1 text-[17px] font-bold focus:border-0"
@@ -157,7 +157,9 @@ function EncryptorView({
         ))}
       </div>
       <p className="text-[13px] text-muted">
-        암호 카드를 누르고 있으면 순서가 보여요. 키워드 자체·글자 수·발음·이미 쓴 단서는 못 써요.
+        암호 카드를 누르고 있으면 순서가 보여요.
+        <br />
+        키워드 자체·글자 수·발음·이미 쓴 단서는 못 써요.
       </p>
       <Button size="lg" className="w-full" onClick={handleSubmit} disabled={submitting}>
         {submitting ? "확정하는 중..." : "단서 확정"}
