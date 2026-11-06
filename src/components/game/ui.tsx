@@ -264,7 +264,6 @@ export function KeywordGrid({
 
 // ====== 단서 카드 (큰 글씨) ======
 export function ClueCards({ clues, teamId }: { clues: string[]; teamId: TeamId }) {
-  const marks = ["①", "②", "③"];
   return (
     <div className="flex flex-col gap-2">
       {clues.map((c, i) => (
@@ -275,7 +274,6 @@ export function ClueCards({ clues, teamId }: { clues: string[]; teamId: TeamId }
             teamId === "white" ? "bg-wt text-wt-ink" : "bg-bt text-bt-ink"
           )}
         >
-          <em className="not-italic font-mono text-xs opacity-60 w-4 shrink-0">{marks[i]}</em>
           {c}
         </div>
       ))}
@@ -314,23 +312,32 @@ export function ClueHistory({
 }
 
 // ====== 숫자 고르기 (44px 버튼) ======
+// 단서 한 줄 = 단서(크게) + 번호 버튼 4개 (단서 카드와 고르기를 한 곳에)
 export function DigitPicker({
   clues,
   picks,
   onPick,
   disabled,
+  teamId,
 }: {
   clues: string[];
   picks: number[];
   onPick?: (clueIdx: number, n: number) => void;
   disabled?: boolean;
+  teamId?: TeamId;
 }) {
   return (
     <div className="flex flex-col gap-2">
       {clues.map((clue, i) => (
-        <div key={i} className="flex items-center gap-2">
-          <span className="flex-1 min-w-0 text-[13px] font-bold text-muted truncate">{clue}</span>
-          <div className="flex gap-1.5">
+        <div
+          key={i}
+          className={cn(
+            "flex items-center gap-2 rounded-2xl pl-3.5 pr-2 py-2",
+            teamId === "black" ? "bg-bt text-bt-ink" : "bg-wt text-wt-ink"
+          )}
+        >
+          <span className="flex-1 min-w-0 text-[19px] font-black break-all leading-tight">{clue}</span>
+          <div className="flex gap-1">
             {[1, 2, 3, 4].map((n) => {
               const on = picks[i] === n;
               const usedElsewhere = picks.some((p, idx) => idx !== i && p === n);
@@ -341,7 +348,7 @@ export function DigitPicker({
                   disabled={disabled}
                   onClick={() => onPick?.(i, n)}
                   className={cn(
-                    "w-11 h-11 rounded-xl border-[1.5px] grid place-items-center font-mono font-bold text-lg transition-colors",
+                    "w-10 h-10 rounded-xl border-[1.5px] grid place-items-center font-mono font-bold text-lg transition-colors",
                     on
                       ? "bg-ink text-paper border-ink"
                       : "bg-white border-line text-ink",

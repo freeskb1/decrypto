@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
-import { subscribeTeam, rematchSameTeams } from "@/lib/game";
+import { subscribeTeam, rematchNewTeams } from "@/lib/game";
 import { hubReturnUrl, goToHub } from "@/lib/hub";
 import type { Room, Player, TeamState, TeamId } from "@/types/game";
 import { cn, formatScore } from "@/lib/utils";
@@ -59,7 +59,7 @@ export default function EndedScreen({
   const handleRematch = async () => {
     setBusy(true);
     try {
-      await rematchSameTeams(room.id);
+      await rematchNewTeams(room.id);
     } catch (e: any) {
       toast.show(e?.message || "다시 하기 실패", "error");
     }
@@ -144,7 +144,7 @@ export default function EndedScreen({
 
         <div className="mt-auto flex flex-col gap-2 pt-2">
           <Button size="lg" className="w-full" onClick={handleRematch} disabled={busy}>
-            같은 팀으로 다시 하기
+            다시 하기 · 팀 새로 섞기
           </Button>
           {hasHub ? (
             <Button size="lg" variant="outline" className="w-full" onClick={handleHub}>

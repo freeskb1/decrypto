@@ -68,55 +68,36 @@ export default function StageGuess({
 
   const submitted = kind === "decode" ? data.ownGuess : data.interceptGuess;
 
-  const draftText = !draft
-    ? "아직 아무도 안 골랐어요 · 팀이 같이 보는 답안이에요"
-    : draft.editorUid === me.uid
-    ? "팀이 같이 보는 답안 · 내가 고치는 중"
-    : null;
+  // 다른 팀원이 고르고 있을 때만 짧게 알려줌
+  const otherEditor = draft && draft.editorUid !== me.uid ? draft.editorName : null;
+  const picking = canAct && !submitted;
 
   return (
     <>
-      <div>
-        <h2 className="font-serif font-black text-[22px] leading-snug">
-          {kind === "intercept" ? `가로채기 · ${targetTeam.name} 단서` : `해독 · 우리 팀 단서`}
-        </h2>
-        <p className="text-[13px] text-muted mt-0.5">
-          {kind === "intercept" ? (
-            <>
-              상대 팀 단서로 상대 암호를 맞혀요.
-              <br />
-              상대 팀도 지금 우리 단서를 가로채는 중이에요.
-            </>
-          ) : (
-            <>
-              상대 팀도 지금 자기 단서를 해독하는 중이에요.
-              <br />
-              결과는 두 팀 다 끝난 뒤에 같이 공개돼요.
-            </>
-          )}
-        </p>
-      </div>
-      <ClueCards clues={data.clues} teamId={target} />
+      <h2 className="font-serif font-black text-[22px] leading-snug">
+        {kind === "intercept" ? `${targetTeam.name} 단서 가로채기` : "우리 단서 해독"}
+      </h2>
+      {kind === "decode" && picking && <KeywordGrid keywords={myTeam.keywords} teamId={myTeamId} />}
+      {picking ? (
+        <DigitPicker clues={data.clues} picks={picks} onPick={handlePick} disabled={submitting} teamId={target} />
+      ) : (
+        <ClueCards clues={data.clues} teamId={target} />
+      )}
 
       {canAct && submitted && (
         <div className="bg-white border-[1.5px] border-line rounded-2xl px-4 py-3 text-center">
-          <div className="text-xs font-bold text-muted">우리 팀 {kind === "intercept" ? "가로채기" : "해독"} 답 제출함</div>
+          <div className="text-xs font-bold text-muted">제출함</div>
           <div className="font-mono font-bold text-[30px] tracking-[0.2em] mt-1">{submitted.join("-")}</div>
-          <div className="text-[13px] text-muted mt-1">상대 팀이 끝나면 다음으로 넘어가요</div>
         </div>
       )}
 
-      {canAct && !submitted && (
+      {picking && (
         <>
-          {kind === "decode" && <KeywordGrid keywords={myTeam.keywords} teamId={myTeamId} />}
-          <DigitPicker clues={data.clues} picks={picks} onPick={handlePick} disabled={submitting} />
-          <p className="text-xs text-muted text-center">
-            {draftText ?? (
-              <>
-                팀이 같이 보는 답안 · <b className="text-ink">{draft?.editorName}</b>이(가) 고치는 중
-              </>
-            )}
-          </p>
+          {otherEditor && (
+            <p className="text-xs text-muted text-center">
+              <b className="text-ink">{otherEditor}</b>이(가) 같이 고르는 중
+            </p>
+          )}
           <Button
             size="lg"
             variant={kind === "intercept" ? "red" : "default"}
@@ -128,7 +109,7 @@ export default function StageGuess({
               ? "제출하는 중..."
               : complete
               ? `${kind === "intercept" ? "가로채기" : "해독"} 제출 · ${picks.join("-")}`
-              : "단서마다 숫자를 골라요"}
+              : "숫자를 골라요"}
           </Button>
         </>
       )}

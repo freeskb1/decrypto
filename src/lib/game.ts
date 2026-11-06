@@ -1008,30 +1008,40 @@ export async function submitTiebreak(
   return committed ? "ok" : "already";
 }
 
-// ====== 같은 팀으로 다시 하기 ======
-export async function rematchSameTeams(roomId: string) {
+// ====== 다시 하기 (팀 새로 랜덤) ======
+// 다시 하기: 팀은 항상 새로 랜덤 배정 → 팀 확인 화면부터 (처음 시작과 같은 흐름)
+export async function rematchNewTeams(roomId: string) {
+  let error = "";
   await roomTx(roomId, (room) => {
-    if (room.phase !== "ended" || !room.teams?.white || !room.teams?.black) return false;
-    const w = room.teams.white;
-    const b = room.teams.black;
-    // 암호전달자 순서를 한 칸씩 돌려서 다음 게임은 다른 사람부터
-    const rot = (arr: string[]) => (arr.length > 1 ? [...arr.slice(1), arr[0]] : arr);
-    const wOrder = rot(toStringArray(w.playerOrder));
-    const bOrder = rot(toStringArray(b.playerOrder));
+    error = "";
+    if (room.phase !== "ended") return false;
+    const uids = Object.keys(room.players || {});
+    if (uids.length < MIN_PLAYERS) {
+      error = `최소 ${MIN_PLAYERS}명이 필요해요`;
+      return false;
+    }
+    if (uids.length > MAX_PLAYERS) {
+      error = `최대 ${MAX_PLAYERS}명까지 할 수 있어요`;
+      return false;
+    }
+    const { white, black } = distributeTeams(uids);
     const { picked, used } = pickFresh(8, toStringArray(room.usedKeywords), []);
     room.teams = {
-      white: makeTeam("white", w.name || defaultTeamName("white"), picked.slice(0, 4), wOrder),
-      black: makeTeam("black", b.name || defaultTeamName("black"), picked.slice(4, 8), bOrder),
+      white: makeTeam("white", defaultTeamName("white"), picked.slice(0, 4), white),
+      black: makeTeam("black", defaultTeamName("black"), picked.slice(4, 8), black),
     };
     room.usedKeywords = used;
+    for (const uid of white) room.players[uid].team = "white";
+    for (const uid of black) room.players[uid].team = "black";
     room.rounds = null;
     room.tiebreak = null;
     room.winner = null;
     room.endReason = null;
     room.roundNumber = 0;
-    room.phase = "keyword_reveal";
+    room.phase = "team_setup";
     return true;
   });
+  if (error) throw new Error(error);
 }
 
 // ====== 하트비트: onDisconnect 활용 + 가끔 갱신 ======
