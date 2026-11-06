@@ -474,7 +474,7 @@ function hydrateRound(v: any): Round {
     white: hydrateRoundTeamData(v.white),
     black: hydrateRoundTeamData(v.black),
     status: v.status === "completed" ? "completed" : "in_progress",
-    stage: (v.stage || "encrypting") as RoundStage,
+    stage: migrateStageName(v),
     encryptingTimerStartAt: v.encryptingTimerStartAt ?? null,
     acks: hydrateAcks(v.acks),
     drafts: hydrateDrafts(v.drafts),
@@ -769,6 +769,7 @@ export async function submitTeamGuess(
     error = "";
     if (room.phase !== "round_in_progress" || num(room.roundNumber) !== roundNumber) return false;
     const round = room.rounds?.[roundNumber];
+    migrateRound(room, round);
     if (!round || round.stage !== kind) return false;
     const data = round[target];
     if (!data) return false;
@@ -823,10 +824,20 @@ function scoreRound(room: any, round: any) {
     const team = room.teams[t];
     if (!data || !team) continue;
     const code = toNumberArray(data.code);
-    const ok = arraysEqual(code, toNumberArray(data.ownGuess));
-    data.ownCorrect = ok;
-    if (!ok) team.miscommunicationTokens = num(team.miscommunicationTokens) + 1;
-    if (roundNumber >= 2) {
+    // 예전 진행 방식(팀별 차례)에서 이미 채점된 부분은 다시 채점하지 않음
+    if (data.ownCorrect === undefined || data.ownCorrect === null) {
+      const ok = arraysEqual(code, toNumberArray(data.ownGuess));
+      data.ownCorrect = ok;
+      if (!ok) team.miscommunicationTokens = num(team.miscommunicationTokens) + 1;
+      const acc = hydrateAccumulation(team.clueAccumulation);
+      const clues = toStringArray(data.clues);
+      for (let i = 0; i < 3; i++) {
+        const k = String(code[i]);
+        if (acc[k] && clues[i]) acc[k] = [...acc[k], clues[i]];
+      }
+      team.clueAccumulation = acc;
+    }
+    if (roundNumber >= 2 && (data.intercepted === undefined || data.intercepted === null)) {
       const got = !!data.interceptGuess && arraysEqual(code, toNumberArray(data.interceptGuess));
       data.intercepted = got;
       if (got) {
@@ -834,14 +845,25 @@ function scoreRound(room: any, round: any) {
         o.interceptionTokens = num(o.interceptionTokens) + 1;
       }
     }
-    const acc = hydrateAccumulation(team.clueAccumulation);
-    const clues = toStringArray(data.clues);
-    for (let i = 0; i < 3; i++) {
-      const k = String(code[i]);
-      if (acc[k] && clues[i]) acc[k] = [...acc[k], clues[i]];
-    }
-    team.clueAccumulation = acc;
   }
+}
+
+// 예전 진행 방식(white_intercept 같은 팀별 단계)으로 저장된 진행 중 라운드를 새 단계로 옮김
+const NEW_STAGES = ["encrypting", "decode", "intercept", "reveal", "settled"];
+export function migrateStageName(round: any): RoundStage {
+  const st = round?.stage || "encrypting";
+  if (NEW_STAGES.includes(st)) return st as RoundStage;
+  const w = round.white || {};
+  const b = round.black || {};
+  if (!w.ownGuess || !b.ownGuess) return "decode";
+  if (num(round.roundNumber) >= 2 && (!w.interceptGuess || !b.interceptGuess)) return "intercept";
+  return "reveal";
+}
+// 트랜잭션 안에서: 단계 이름을 옮기고, 공개로 가면 남은 채점
+function migrateRound(room: any, round: any) {
+  if (!round || NEW_STAGES.includes(round.stage || "encrypting")) return;
+  round.stage = migrateStageName(round);
+  if (round.stage === "reveal") scoreRound(room, round);
 }
 
 // ====== 공개 화면 확인 ======
@@ -855,6 +877,7 @@ export async function advanceFromStage(roomId: string, roundNumber: number, from
   await roomTx(roomId, (room) => {
     if (room.phase !== "round_in_progress" || num(room.roundNumber) !== roundNumber) return false;
     const round = room.rounds?.[roundNumber];
+    migrateRound(room, round);
     if (!round || round.stage !== fromStage) return false;
 
     if (fromStage === "encrypting") {
