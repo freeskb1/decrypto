@@ -9,6 +9,7 @@ import {
   joinRoomById,
   ensureHubRoom,
   joinHubRoom,
+  subscribeConnected,
 } from "@/lib/game";
 import { readHubParams, hubRoomId, type HubParams } from "@/lib/hub";
 import type { Room, Player } from "@/types/game";
@@ -44,6 +45,8 @@ export default function RoomPage() {
   const [hubError, setHubError] = useState("");
   const hubHostRef = useRef<string | null>(null);
   const hubJoinRef = useRef<string | null>(null);
+  const [connected, setConnected] = useState<boolean | null>(null);
+  useEffect(() => subscribeConnected(setConnected), []);
 
   // 말랑월드 쿼리 읽기 (이 방 키와 맞을 때만 적용 → 쿼리가 없으면 기존 흐름 그대로)
   useEffect(() => {
@@ -142,7 +145,9 @@ export default function RoomPage() {
   const hubDebug = hub
     ? `${roomId} · 내 판 ${hub.sid.slice(-5)} · 방 판 ${room?.hubSid ? room.hubSid.slice(-5) : "없음"} · ${
         room?.phase || "방 없음"
-      } · ${players.length}명 · ${meInRoom ? "입장함" : "미입장"}${hub.host ? " · 방장" : ""} · v3`
+      } · ${players.length}명 · ${meInRoom ? "입장함" : "미입장"}${hub.host ? " · 방장" : ""} · 서버 ${
+        connected === null ? "확인 중" : connected ? "연결됨" : "연결 안 됨"
+      } · v4`
     : "";
 
   // 말랑월드 멤버(및 방장 예외 상황): 이번 판 방이 생기면 자동 입장 (이미 있으면 건너뜀)
@@ -233,6 +238,30 @@ export default function RoomPage() {
     if (room.phase !== "waiting") {
       return (
         <Notice title="이미 시작된 게임이에요" desc="게임이 진행 중이라 참가할 수 없어요">
+          {hub?.host && (
+            <Button
+              className="w-full mb-2"
+              onClick={async () => {
+                try {
+                  await ensureHubRoom({
+                    roomId,
+                    hubRoom: hub.room,
+                    sid: hub.sid,
+                    uid: myUid,
+                    nickname: hub.name,
+                    hubUid: hub.uid,
+                    force: true,
+                  });
+                  hubJoinRef.current = null;
+                } catch (e: any) {
+                  toast.show(e?.message || "다시 만들기 실패", "error");
+                }
+              }}
+            >
+              새 판으로 다시 만들기
+            </Button>
+          )}
+          {hubDebug && <div className="text-[11px] text-muted font-mono mb-2 break-all">{hubDebug}</div>}
           <Button className="w-full" onClick={() => router.push("/")}>
             메인으로
           </Button>

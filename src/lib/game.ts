@@ -132,8 +132,16 @@ async function roomTx(roomId: string, mut: (room: any) => boolean): Promise<bool
   const res = await runTransaction(ref(db, `rooms/${roomId}`), (current: any) => {
     if (!current) return current;
     return mut(current) ? current : undefined;
-  });
+  }, { applyLocally: false }); // 서버가 확정한 결과만 화면에 (연결이 끊긴 폰에 가짜 상태가 보이지 않게)
   return res.committed;
+}
+
+// ====== 서버 연결 상태 (진단용) ======
+export function subscribeConnected(cb: (connected: boolean) => void): Unsubscribe {
+  const r = ref(db, ".info/connected");
+  const handler = (snap: DataSnapshot) => cb(snap.val() === true);
+  onValue(r, handler);
+  return () => off(r, "value", handler);
 }
 
 // ====== 인증 ======
@@ -262,10 +270,11 @@ export async function ensureHubRoom(opts: {
   uid: string;
   nickname: string;
   hubUid: string;
+  force?: boolean; // 방장이 "새 판으로 다시 만들기"를 누름 → 같은 판이어도 새 대기실
 }): Promise<void> {
-  const { roomId, hubRoom, sid, uid, nickname, hubUid } = opts;
+  const { roomId, hubRoom, sid, uid, nickname, hubUid, force } = opts;
   await runTransaction(ref(db, `rooms/${roomId}`), (current: any) => {
-    if (current && current.hubSid === sid) {
+    if (current && current.hubSid === sid && !force) {
       const players: Record<string, any> = { ...(current.players || {}) };
       if (players[uid]) return undefined; // 이미 들어와 있음 (새로고침 등) → 변경 없음
       // 같은 말랑월드 방장이 다른 브라우저(익명 uid가 바뀜)로 다시 들어온 경우만 방장 넘겨받기
@@ -299,7 +308,7 @@ export async function ensureHubRoom(opts: {
         [uid]: makePlayer(uid, nickname, true, hubUid),
       },
     };
-  });
+  }, { applyLocally: false }); // 서버 답 전에 혼자만 보이는 가짜 대기실이 생기지 않게
 }
 
 // 멤버: 이번 판 방에 멱등하게 입장. 이미 players에 있으면 다시 쓰지 않음 (게임 중이어도 재입장 가능)
