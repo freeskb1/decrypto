@@ -10,29 +10,12 @@ export type GamePhase =
   | "tiebreak" // 동점 → 상대 키워드 맞히기
   | "ended"; // 종료
 
-// 한 라운드 진행 순서 (공식 룰: 팀별로 차례대로 해결)
-// 암호 만들기 → 흰팀 단서 공개 → 검은팀 가로채기(2라운드부터) → 흰팀 해독 → 다 같이 공개
-//            → 검은팀 단서 공개 → 흰팀 가로채기(2라운드부터) → 검은팀 해독 → 다 같이 공개 → 라운드 끝 판정
-export type RoundStage =
-  | "encrypting"
-  | "white_intercept"
-  | "white_decode"
-  | "white_reveal"
-  | "black_intercept"
-  | "black_decode"
-  | "black_reveal"
-  | "settled";
+// 한 라운드 진행 순서: 두 팀이 같은 단계를 동시에 하고, 두 팀 다 끝나야 다음 단계
+// 암호 만들기(양 팀 동시) → 우리 팀 해독(양 팀 동시, 결과는 아직 비밀)
+// → 상대 팀 가로채기(양 팀 동시, 2라운드부터) → 다 같이 공개(두 팀 결과 한 번에) → 라운드 끝 판정
+export type RoundStage = "encrypting" | "decode" | "intercept" | "reveal" | "settled";
 
-export const STAGE_ORDER: RoundStage[] = [
-  "encrypting",
-  "white_intercept",
-  "white_decode",
-  "white_reveal",
-  "black_intercept",
-  "black_decode",
-  "black_reveal",
-  "settled",
-];
+export const STAGE_ORDER: RoundStage[] = ["encrypting", "decode", "intercept", "reveal", "settled"];
 
 // 예전 데이터 호환용으로만 남겨 둠 (지금은 항상 standard / offline)
 export type GameMode = "standard" | "duel";
@@ -93,9 +76,9 @@ export interface Round {
   stage: RoundStage;
   // 먼저 단서를 낸 쪽이 생기면 시각 기록 → 다른 암호전달자에게 30초
   encryptingTimerStartAt: number | null;
-  // 공개 화면 확인: acks[팀][uid] = true
+  // 공개 화면 확인: acks.all[uid] = true
   acks: Record<string, Record<string, boolean>>;
-  // 공유 초안: drafts["white_intercept"] 등
+  // 공유 초안: drafts["white_decode"](흰팀 해독), drafts["white_intercept"](검은팀이 흰팀 암호 가로채기)
   drafts: Record<string, GuessDraft>;
 }
 
@@ -141,17 +124,16 @@ export function stageIndex(stage: RoundStage | string | null | undefined): numbe
   return i < 0 ? 0 : i;
 }
 
-// 이 팀 단서가 모두에게 공개됐는지 (그 팀 차례가 시작된 뒤)
+// 이 팀 단서가 상대 팀에게도 공개됐는지 (해독 단계에서는 자기 팀만 봄 → 가로채기 단계부터 공개)
 export function cluesPublic(round: Round, team: TeamId): boolean {
   if (round.status === "completed") return true;
-  const first = team === "white" ? "white_intercept" : "black_intercept";
-  return stageIndex(round.stage) >= stageIndex(first);
+  return stageIndex(round.stage) >= stageIndex("intercept");
 }
 
 // 이 팀 암호(정답)가 공개됐는지
 export function codeRevealed(round: Round, team: TeamId): boolean {
   if (round.status === "completed") return true;
-  return stageIndex(round.stage) >= stageIndex(`${team}_reveal`);
+  return stageIndex(round.stage) >= stageIndex("reveal");
 }
 
 // 단서 정규화 (재사용 체크용): 공백 제거 + 소문자

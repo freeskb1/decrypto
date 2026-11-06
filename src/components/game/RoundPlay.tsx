@@ -17,14 +17,6 @@ import StageReveal from "./stages/StageReveal";
 import NoteSheet from "./NoteSheet";
 import { Screen, StatusBar, MeLine, WaitLine, nameList } from "./ui";
 
-type Kind = "intercept" | "decode" | "reveal";
-
-function parseStage(stage: RoundStage): { target: TeamId; kind: Kind } | null {
-  const m = /^(white|black)_(intercept|decode|reveal)$/.exec(stage);
-  if (!m) return null;
-  return { target: m[1] as TeamId, kind: m[2] as Kind };
-}
-
 export default function RoundPlay({
   room,
   players,
@@ -61,12 +53,10 @@ export default function RoundPlay({
   // 공개 화면: 확인해야 하는 사람 = 접속 중인 플레이어 전원
   const teamPlayers = players.filter((p) => p.team === "white" || p.team === "black");
   const present = teamPlayers.filter((p) => isPresent(p, now) || p.uid === me?.uid);
-  const parsed = round ? parseStage(round.stage) : null;
-  const revealTarget: TeamId | null = parsed && parsed.kind === "reveal" ? parsed.target : null;
-  const acks: Record<string, boolean> =
-    revealTarget && round ? round.acks[revealTarget] || {} : {};
+  const isReveal = round?.stage === "reveal";
+  const acks: Record<string, boolean> = isReveal && round ? round.acks.all || {} : {};
   const ackedCount = present.filter((p) => acks[p.uid]).length;
-  const allAcked = revealTarget !== null && present.length > 0 && ackedCount >= present.length;
+  const allAcked = isReveal && present.length > 0 && ackedCount >= present.length;
 
   // ===== 자동 진행: 누구 폰이든 조건을 보면 (멱등 트랜잭션이라 여러 명이 불러도 한 번만) =====
   useEffect(() => {
@@ -79,7 +69,7 @@ export default function RoundPlay({
     ) {
       should = true;
     }
-    if (revealTarget && allAcked) should = true;
+    if (isReveal && allAcked) should = true;
     if (!should) return;
     const key = `${round.roundNumber}:${round.stage}`;
     const t = Date.now();
@@ -89,7 +79,7 @@ export default function RoundPlay({
     advanceFromStage(room.id, round.roundNumber, round.stage).catch((e) =>
       console.error("advance failed", e)
     );
-  }, [round, room.id, room.phase, revealTarget, allAcked, now]);
+  }, [round, room.id, room.phase, isReveal, allAcked, now]);
 
   if (!white || !black || !round || !me?.team) {
     return (
@@ -102,11 +92,13 @@ export default function RoundPlay({
   const meP: Player = me;
   const roundP: Round = round;
   const myTeamId: TeamId = me.team;
+  // 해독 = 우리 팀 단서, 가로채기 = 상대 팀 단서 (두 팀 동시)
   const guessStage =
-    parsed && parsed.kind !== "reveal"
-      ? { target: parsed.target, kind: parsed.kind as "intercept" | "decode" }
+    round.stage === "decode"
+      ? { target: me.team, kind: "decode" as const }
+      : round.stage === "intercept"
+      ? { target: otherTeamOf(me.team), kind: "intercept" as const }
       : null;
-  const revealT: TeamId | null = revealTarget;
   const myTeam = myTeamId === "white" ? white : black;
   const whiteT: TeamState = white;
   const blackT: TeamState = black;
@@ -161,63 +153,50 @@ export default function RoundPlay({
         </>
       );
     }
-  } else if (parsed) {
-    const T = parsed.target;
-    const O = otherTeamOf(T);
-    const tName = teamOf(T).name;
-    const oName = teamOf(O).name;
-    const isTEncryptor = round[T].encryptorUid === me.uid;
-    if (parsed.kind === "intercept") {
-      if (myTeamId === O) {
-        role = "가로채기 · 우리 팀이 먼저 말해요";
-      } else {
-        role = isTEncryptor ? "암호전달자 · 조용히 들어요" : "상대가 우리 단서를 가로채는 중";
-        roleMuted = !isTEncryptor;
-      }
-      const names = players.filter((p) => p.team === O).map((p) => p.nickname);
-      wait = (
-        <>
-          기다리는 중: {oName} 가로채기 <b className="font-black">({nameList(names)})</b>
-        </>
-      );
-    } else if (parsed.kind === "decode") {
-      if (myTeamId === T) {
-        role = isTEncryptor ? "암호전달자 · 말하지 말고 기다려요" : "해독 · 우리 단서 맞히기";
-      } else {
-        role = `${tName} 해독 지켜보기`;
-        roleMuted = true;
-      }
-      const names = players
-        .filter((p) => p.team === T && p.uid !== round[T].encryptorUid)
-        .map((p) => p.nickname);
-      wait = (
-        <>
-          기다리는 중: {tName} 해독 <b className="font-black">({nameList(names)})</b>
-        </>
-      );
+  } else if (stage === "decode" || stage === "intercept") {
+    const isDecode = stage === "decode";
+    const isEnc = round[myTeamId].encryptorUid === me.uid;
+    if (isDecode) {
+      role = isEnc ? "암호전달자 · 말하지 말고 기다려요" : "해독 · 우리 단서 맞히기";
+      roleMuted = isEnc;
     } else {
-      role = "결과 보는 중";
-      roleMuted = true;
-      const next =
-        T === "white"
-          ? `${oName} 단서 공개`
-          : round.roundNumber >= MAX_ROUNDS
-          ? "게임 결과"
-          : "라운드 끝 판정";
-      const notYet = present.filter((p) => !acks[p.uid]).map((p) => p.nickname);
-      wait = (
+      role = "가로채기 · 상대 단서 맞히기";
+    }
+    // 아직 답을 안 낸 팀 (해독: 그 팀 단서의 ownGuess / 가로채기: 상대 팀 단서의 interceptGuess)
+    const notDone = (["white", "black"] as TeamId[]).filter((t) =>
+      isDecode ? !round[t].ownGuess : !round[otherTeamOf(t)].interceptGuess
+    );
+    const label = isDecode ? "해독" : "가로채기";
+    wait =
+      notDone.length === 0 ? (
+        "넘어가는 중…"
+      ) : (
         <>
-          다음: <b className="font-black">{next}</b> · 모두 확인하면 넘어가요 ({ackedCount}/
-          {present.length})
-          {notYet.length > 0 && (
-            <span className="block text-muted text-xs mt-0.5">
-              기다리는 중: {nameList(notYet, 4)}
-            </span>
-          )}
+          기다리는 중: <b className="font-black">{nameList(notDone.map((t) => teamOf(t).name))}</b> {label}
+          <span className="block text-muted text-xs mt-0.5">
+            {isDecode
+              ? round.roundNumber >= 2
+                ? "두 팀 다 해독하면 상대 단서 가로채기로 넘어가요"
+                : "두 팀 다 해독하면 같이 공개해요 (1라운드는 가로채기 없음)"
+              : "두 팀 다 가로채면 같이 공개해요"}
+          </span>
         </>
       );
-      waitTone = allAcked ? "ok" : "red";
-    }
+    if (notDone.length === 0) waitTone = "ok";
+  } else if (stage === "reveal") {
+    role = "결과 보는 중";
+    roleMuted = true;
+    const next = round.roundNumber >= MAX_ROUNDS ? "게임 결과" : "라운드 끝 판정";
+    const notYet = present.filter((p) => !acks[p.uid]).map((p) => p.nickname);
+    wait = (
+      <>
+        다음: <b className="font-black">{next}</b> · 모두 확인하면 넘어가요 ({ackedCount}/{present.length})
+        {notYet.length > 0 && (
+          <span className="block text-muted text-xs mt-0.5">기다리는 중: {nameList(notYet, 4)}</span>
+        )}
+      </>
+    );
+    waitTone = allAcked ? "ok" : "red";
   } else {
     role = "다음 라운드 준비 중";
     roleMuted = true;
@@ -266,23 +245,20 @@ export default function RoundPlay({
             me={meP}
             myTeam={myTeam}
             targetTeam={teamOf(guessStage.target)}
-            actingTeam={teamOf(
-              guessStage.kind === "intercept" ? otherTeamOf(guessStage.target) : guessStage.target
-            )}
+            actingTeam={myTeam}
           />
         )}
 
-        {revealT && (
+        {isReveal && (
           <StageReveal
             round={roundP}
-            target={revealT}
             myTeamId={myTeamId}
-            targetTeam={teamOf(revealT)}
-            otherTeam={teamOf(otherTeamOf(revealT))}
+            myTeam={myTeam}
+            otherTeam={teamOf(otherTeamOf(myTeamId))}
             acked={!!acks[meP.uid]}
             allAcked={allAcked}
             onAck={() => {
-              ackReveal(room.id, roundP.roundNumber, revealT, meP.uid).catch(() => {});
+              ackReveal(room.id, roundP.roundNumber, meP.uid).catch(() => {});
             }}
             onSkip={() => {
               advanceFromStage(room.id, roundP.roundNumber, roundP.stage).catch(() => {});

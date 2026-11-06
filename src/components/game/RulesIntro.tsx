@@ -33,8 +33,9 @@ export default function RulesIntro({
         <div className="bg-bt text-bt-ink rounded-2xl px-4 py-3.5 text-[13px] leading-relaxed">
           <div className="font-serif font-black text-[18px] mb-1">진행 순서</div>
           암호전달자 둘이 동시에 단서 3개 작성 (먼저 낸 쪽이 생기면 30초)
-          <br />→ 흰팀 단서: 검은팀 가로채기 → 흰팀 해독 → 다 같이 공개
-          <br />→ 검은팀 단서: 흰팀 가로채기 → 검은팀 해독 → 다 같이 공개
+          <br />→ 두 팀 동시에 우리 팀 단서 해독
+          <br />→ 두 팀 다 끝나면, 동시에 상대 팀 단서 가로채기
+          <br />→ 두 팀 다 끝나면, 두 팀 결과 같이 공개
           <br />
           <span className="opacity-70">1라운드는 가로채기 없음 · 승패는 라운드가 끝날 때만 판정</span>
         </div>

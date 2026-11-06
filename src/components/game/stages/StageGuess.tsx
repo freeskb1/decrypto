@@ -6,7 +6,8 @@ import { draftKey, setDraft, submitTeamGuess } from "@/lib/game";
 import type { Room, Round, TeamState, TeamId, Player } from "@/types/game";
 import { ClueCards, ClueHistory, DigitPicker, HoldCode, KeywordGrid } from "../ui";
 
-// 한 팀 단서에 대해: 상대 팀 가로채기(intercept) 또는 그 팀 해독(decode)
+// 해독(decode): 우리 팀 단서로 우리 암호 맞히기 / 가로채기(intercept): 상대 팀 단서로 상대 암호 맞히기
+// 두 팀이 동시에 하고, 제출한 답의 결과는 두 팀 다 끝난 뒤 다 같이 공개 때 나온다
 export default function StageGuess({
   room,
   round,
@@ -65,6 +66,8 @@ export default function StageGuess({
     setSubmitting(false);
   };
 
+  const submitted = kind === "decode" ? data.ownGuess : data.interceptGuess;
+
   const draftText = !draft
     ? "아직 아무도 안 골랐어요 · 팀이 같이 보는 답안이에요"
     : draft.editorUid === me.uid
@@ -74,16 +77,36 @@ export default function StageGuess({
   return (
     <>
       <div>
-        <h2 className="font-serif font-black text-[22px] leading-snug">{targetTeam.name} 단서</h2>
+        <h2 className="font-serif font-black text-[22px] leading-snug">
+          {kind === "intercept" ? `가로채기 · ${targetTeam.name} 단서` : `해독 · 우리 팀 단서`}
+        </h2>
         <p className="text-[13px] text-muted mt-0.5">
-          {kind === "intercept"
-            ? `${actingTeam.name}이 먼저 가로채요. 그다음 ${targetTeam.name}이 해독해요.`
-            : `${targetTeam.name}이 해독해요. 암호전달자는 말하지 않아요.`}
+          {kind === "intercept" ? (
+            <>
+              상대 팀 단서로 상대 암호를 맞혀요.
+              <br />
+              상대 팀도 지금 우리 단서를 가로채는 중이에요.
+            </>
+          ) : (
+            <>
+              상대 팀도 지금 자기 단서를 해독하는 중이에요.
+              <br />
+              결과는 두 팀 다 끝난 뒤에 같이 공개돼요.
+            </>
+          )}
         </p>
       </div>
       <ClueCards clues={data.clues} teamId={target} />
 
-      {canAct && (
+      {canAct && submitted && (
+        <div className="bg-white border-[1.5px] border-line rounded-2xl px-4 py-3 text-center">
+          <div className="text-xs font-bold text-muted">우리 팀 {kind === "intercept" ? "가로채기" : "해독"} 답 제출함</div>
+          <div className="font-mono font-bold text-[30px] tracking-[0.2em] mt-1">{submitted.join("-")}</div>
+          <div className="text-[13px] text-muted mt-1">상대 팀이 끝나면 다음으로 넘어가요</div>
+        </div>
+      )}
+
+      {canAct && !submitted && (
         <>
           {kind === "decode" && <KeywordGrid keywords={myTeam.keywords} teamId={myTeamId} />}
           <DigitPicker clues={data.clues} picks={picks} onPick={handlePick} disabled={submitting} />
@@ -114,37 +137,19 @@ export default function StageGuess({
         <>
           <HoldCode code={data.code} />
           <div className="bg-white border-[1.5px] border-line rounded-2xl px-4 py-3 text-[13px]">
-            <b className="font-black">말하지 말고 지켜봐요.</b>
-            <span className="text-muted"> 팀원들이 해독하는 동안 표정도 조심!</span>
+            {submitted ? (
+              <>
+                <b className="font-black">우리 팀 답 제출함 · {submitted.join("-")}</b>
+                <span className="text-muted"> 상대 팀이 끝나면 다음으로 넘어가요</span>
+              </>
+            ) : (
+              <>
+                <b className="font-black">말하지 말고 지켜봐요.</b>
+                <span className="text-muted"> 팀원들이 해독하는 동안 표정도 조심!</span>
+              </>
+            )}
           </div>
         </>
-      )}
-
-      {!canAct && !(kind === "decode" && isTargetEncryptor) && (
-        <div className="bg-white border-[1.5px] border-line rounded-2xl px-4 py-3 text-[13px]">
-          {kind === "intercept" ? (
-            myTeamId === target ? (
-              <>
-                <b className="font-black">{actingTeam.name}이 우리 단서를 가로채려고 의논 중</b>
-                <span className="text-muted"> · 조용히 들어요. 끝나면 우리 팀이 해독해요.</span>
-                {isTargetEncryptor && (
-                  <div className="mt-2">
-                    <HoldCode code={data.code} />
-                  </div>
-                )}
-              </>
-            ) : null
-          ) : (
-            <>
-              <b className="font-black">{targetTeam.name}이 해독하는 중</b>
-              <span className="text-muted">
-                {round.roundNumber >= 2
-                  ? " · 우리 가로채기 답은 이미 냈어요."
-                  : " · 1라운드는 가로채기 없이 지켜봐요."}
-              </span>
-            </>
-          )}
-        </div>
       )}
 
       <ClueHistory title={`${targetTeam.name} 지난 단서`} accumulation={targetTeam.clueAccumulation} />

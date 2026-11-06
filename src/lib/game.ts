@@ -455,9 +455,9 @@ function hydrateDrafts(v: any): Record<string, GuessDraft> {
 }
 
 function hydrateAcks(v: any): Record<string, Record<string, boolean>> {
-  const out: Record<string, Record<string, boolean>> = { white: {}, black: {} };
+  const out: Record<string, Record<string, boolean>> = { white: {}, black: {}, all: {} };
   if (!v || typeof v !== "object") return out;
-  for (const t of ["white", "black"]) {
+  for (const t of ["white", "black", "all"]) {
     const m = v[t];
     if (m && typeof m === "object") {
       for (const uid of Object.keys(m)) {
@@ -714,8 +714,8 @@ export async function submitClues(
     mine.cluesSubmittedAt = now;
     const other = round[otherTeamOf(teamId)];
     if (other && other.cluesSubmittedAt) {
-      // 둘 다 냄 → 바로 흰팀 차례로
-      round.stage = roundNumber >= 2 ? "white_intercept" : "white_decode";
+      // 둘 다 냄 → 양 팀 동시에 우리 팀 해독
+      round.stage = "decode";
     } else if (!round.encryptingTimerStartAt) {
       round.encryptingTimerStartAt = now; // 다른 암호전달자에게 30초
     }
@@ -745,8 +745,10 @@ export async function setDraft(
   });
 }
 
-// ====== 가로채기 / 해독 제출 (팀 답) ======
-// 같은 라운드·같은 단계의 답이 이미 있으면 아무것도 안 함 (두 사람이 동시에 눌러도 토큰은 한 번만)
+// ====== 해독 / 가로채기 제출 (팀 답) ======
+// 해독 단계: 두 팀이 동시에 자기 팀 암호를 맞힘. 가로채기 단계: 두 팀이 동시에 상대 팀 암호를 맞힘.
+// 결과(성공·실패·토큰·기록지)는 두 팀 다 낸 뒤 "다 같이 공개" 때 한 번에 계산한다 (중간에 정답이 새지 않게)
+// 같은 단계의 그 팀 답이 이미 있으면 아무것도 안 함 (두 사람이 동시에 눌러도 한 번만)
 export async function submitTeamGuess(
   roomId: string,
   roundNumber: number,
@@ -767,11 +769,10 @@ export async function submitTeamGuess(
     error = "";
     if (room.phase !== "round_in_progress" || num(room.roundNumber) !== roundNumber) return false;
     const round = room.rounds?.[roundNumber];
-    if (!round || round.stage !== `${target}_${kind}`) return false;
+    if (!round || round.stage !== kind) return false;
     const data = round[target];
     if (!data) return false;
     const myTeam: TeamId | null = room.players?.[uid]?.team ?? null;
-    const code = toNumberArray(data.code);
 
     if (kind === "intercept") {
       if (myTeam !== otherTeamOf(target)) {
@@ -779,15 +780,12 @@ export async function submitTeamGuess(
         return false;
       }
       if (data.interceptGuess) return false;
-      const ok = arraysEqual(code, guess);
       data.interceptGuess = guess;
       data.interceptGuessAt = Date.now();
-      data.intercepted = ok;
-      if (ok) {
-        const t = room.teams[otherTeamOf(target)];
-        t.interceptionTokens = num(t.interceptionTokens) + 1;
+      if (round.white?.interceptGuess && round.black?.interceptGuess) {
+        scoreRound(room, round);
+        round.stage = "reveal";
       }
-      round.stage = `${target}_decode`;
       return true;
     }
 
@@ -801,13 +799,41 @@ export async function submitTeamGuess(
       return false;
     }
     if (data.ownGuess) return false;
-    const ok = arraysEqual(code, guess);
     data.ownGuess = guess;
     data.ownGuessAt = Date.now();
+    if (round.white?.ownGuess && round.black?.ownGuess) {
+      if (roundNumber >= 2) {
+        round.stage = "intercept";
+      } else {
+        scoreRound(room, round); // 1라운드는 가로채기 없음
+        round.stage = "reveal";
+      }
+    }
+    return true;
+  });
+  if (error) throw new Error(error);
+  return committed ? "ok" : "already";
+}
+
+// 두 팀 답이 다 모이면: 성공·실패 판정, 토큰, 기록지(번호 칸)에 단서 쌓기
+function scoreRound(room: any, round: any) {
+  const roundNumber = num(round.roundNumber);
+  for (const t of ["white", "black"] as TeamId[]) {
+    const data = round[t];
+    const team = room.teams[t];
+    if (!data || !team) continue;
+    const code = toNumberArray(data.code);
+    const ok = arraysEqual(code, toNumberArray(data.ownGuess));
     data.ownCorrect = ok;
-    const team = room.teams[target];
     if (!ok) team.miscommunicationTokens = num(team.miscommunicationTokens) + 1;
-    // 이제 암호가 공개되므로 기록지(번호 칸)에 단서를 쌓는다
+    if (roundNumber >= 2) {
+      const got = !!data.interceptGuess && arraysEqual(code, toNumberArray(data.interceptGuess));
+      data.intercepted = got;
+      if (got) {
+        const o = room.teams[otherTeamOf(t)];
+        o.interceptionTokens = num(o.interceptionTokens) + 1;
+      }
+    }
     const acc = hydrateAccumulation(team.clueAccumulation);
     const clues = toStringArray(data.clues);
     for (let i = 0; i < 3; i++) {
@@ -815,16 +841,12 @@ export async function submitTeamGuess(
       if (acc[k] && clues[i]) acc[k] = [...acc[k], clues[i]];
     }
     team.clueAccumulation = acc;
-    round.stage = `${target}_reveal`;
-    return true;
-  });
-  if (error) throw new Error(error);
-  return committed ? "ok" : "already";
+  }
 }
 
 // ====== 공개 화면 확인 ======
-export async function ackReveal(roomId: string, roundNumber: number, team: TeamId, uid: string) {
-  await set(ref(db, `rooms/${roomId}/rounds/${roundNumber}/acks/${team}/${uid}`), true);
+export async function ackReveal(roomId: string, roundNumber: number, uid: string) {
+  await set(ref(db, `rooms/${roomId}/rounds/${roundNumber}/acks/all/${uid}`), true);
 }
 
 // ====== 다음 단계로 (누구 폰이든 조건을 보면 호출, 멱등) ======
@@ -837,14 +859,10 @@ export async function advanceFromStage(roomId: string, roundNumber: number, from
 
     if (fromStage === "encrypting") {
       if (!round.white?.cluesSubmittedAt || !round.black?.cluesSubmittedAt) return false;
-      round.stage = roundNumber >= 2 ? "white_intercept" : "white_decode";
+      round.stage = "decode";
       return true;
     }
-    if (fromStage === "white_reveal") {
-      round.stage = roundNumber >= 2 ? "black_intercept" : "black_decode";
-      return true;
-    }
-    if (fromStage === "black_reveal") {
+    if (fromStage === "reveal") {
       round.stage = "settled";
       round.status = "completed";
       judgeEndOfRound(room, roundNumber);
