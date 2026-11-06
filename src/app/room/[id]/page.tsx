@@ -42,6 +42,8 @@ export default function RoomPage() {
   const [hubChecked, setHubChecked] = useState(false);
   const [hubHostDone, setHubHostDone] = useState(false);
   const [hubError, setHubError] = useState("");
+  // 이 화면을 연 시각: 그 뒤에 방장이 새로 만든 방이면 내 sid가 예전 것이어도 그 판으로 들어간다
+  const openedAtRef = useRef<number>(Date.now());
   const hubHostRef = useRef<string | null>(null);
   const hubJoinRef = useRef<string | null>(null);
 
@@ -129,20 +131,33 @@ export default function RoomPage() {
     })();
   }, [hub, myUid, roomId]);
 
+  // 멤버가 받은 sid가 방장 것과 다를 때(같은 브라우저 탭, 말랑월드에서 다시 시작 등):
+  // 이 화면을 연 뒤에 방장이 새로 만든 대기실이면 그 판으로 본다
+  const hubMatches =
+    !!hub &&
+    !!room &&
+    (room.hubSid === hub.sid ||
+      (!hub.host &&
+        room.phase === "waiting" &&
+        !!room.hubSid &&
+        typeof room.createdAt === "number" &&
+        room.createdAt >= openedAtRef.current - 5000));
+  const roomSid = hubMatches && room ? room.hubSid || "" : "";
+
   // 말랑월드 멤버(및 방장 예외 상황): 이번 판 방이 생기면 자동 입장 (이미 있으면 건너뜀)
   useEffect(() => {
     if (!hub || !myUid || !room) return;
     if (hub.host && !hubHostDone) return;
-    if (room.hubSid !== hub.sid) return; // 방장을 기다리는 중
+    if (!hubMatches) return; // 방장을 기다리는 중
     if (meInRoom || room.phase !== "waiting") return;
-    const key = `${hub.sid}:${myUid}`;
+    const key = `${roomSid}:${myUid}`;
     if (hubJoinRef.current === key) return;
     hubJoinRef.current = key;
     (async () => {
       try {
         await joinHubRoom({
           roomId,
-          sid: hub.sid,
+          sid: roomSid,
           uid: myUid,
           nickname: hub.name,
           hubUid: hub.uid,
@@ -154,7 +169,7 @@ export default function RoomPage() {
         setHubError(e?.message || "입장 실패");
       }
     })();
-  }, [hub, myUid, room, meInRoom, hubHostDone, roomId]);
+  }, [hub, myUid, room, meInRoom, hubHostDone, roomId, hubMatches, roomSid]);
 
   const handleJoin = async () => {
     if (!nickname.trim()) {
@@ -183,7 +198,7 @@ export default function RoomPage() {
   }
 
   // 말랑월드: 이번 판 방이 아직 없음 (방장은 만드는 중, 멤버는 기다리는 중)
-  if (hub && (!room || room.hubSid !== hub.sid)) {
+  if (hub && (!room || !hubMatches)) {
     return (
       <HubWait
         text={hub.host ? "방 만드는 중..." : "방장을 기다리는 중…"}
