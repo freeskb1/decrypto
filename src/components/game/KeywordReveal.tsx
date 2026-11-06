@@ -114,7 +114,7 @@ export default function KeywordReveal({
         <div className="mt-auto flex flex-col gap-2">
           <Button size="lg" className="w-full" onClick={handleReady} disabled={myReady || busy}>
             <Check className="w-4 h-4" />
-            {myReady ? "준비 완료됨" : "우리 팀 준비 완료"}
+            {busy ? "보내는 중…" : myReady ? "준비 완료됨" : "우리 팀 준비 완료"}
           </Button>
           <WaitLine tone={notReady.length ? "red" : "ok"}>
             {notReady.length ? (

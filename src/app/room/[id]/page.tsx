@@ -9,7 +9,6 @@ import {
   joinRoomById,
   ensureHubRoom,
   joinHubRoom,
-  subscribeConnected,
 } from "@/lib/game";
 import { readHubParams, hubRoomId, type HubParams } from "@/lib/hub";
 import type { Room, Player } from "@/types/game";
@@ -45,8 +44,6 @@ export default function RoomPage() {
   const [hubError, setHubError] = useState("");
   const hubHostRef = useRef<string | null>(null);
   const hubJoinRef = useRef<string | null>(null);
-  const [connected, setConnected] = useState<boolean | null>(null);
-  useEffect(() => subscribeConnected(setConnected), []);
 
   // 말랑월드 쿼리 읽기 (이 방 키와 맞을 때만 적용 → 쿼리가 없으면 기존 흐름 그대로)
   useEffect(() => {
@@ -141,14 +138,6 @@ export default function RoomPage() {
     (room.hubSid === hub.sid ||
       (!hub.host && !!room.hubSid && (room.phase === "waiting" || meInRoom)));
   const roomSid = hubMatches && room ? room.hubSid || "" : "";
-  // 진단용 (테스트 중 문제 찾기): 방 키 · 내 판 · 방 판 · 방 상태 · 인원 · 나 들어감 여부 · 배포 버전
-  const hubDebug = hub
-    ? `${roomId} · 내 판 ${hub.sid.slice(-5)} · 방 판 ${room?.hubSid ? room.hubSid.slice(-5) : "없음"} · ${
-        room?.phase || "방 없음"
-      } · ${players.length}명 · ${meInRoom ? "입장함" : "미입장"}${hub.host ? " · 방장" : ""} · 서버 ${
-        connected === null ? "확인 중" : connected ? "연결됨" : "연결 안 됨"
-      } · v4`
-    : "";
 
   // 말랑월드 멤버(및 방장 예외 상황): 이번 판 방이 생기면 자동 입장 (이미 있으면 건너뜀)
   useEffect(() => {
@@ -209,7 +198,7 @@ export default function RoomPage() {
       <HubWait
         text={hub.host ? "방 만드는 중..." : "방장을 기다리는 중…"}
         error={hubError}
-        debug={hubDebug}
+       
       />
     );
   }
@@ -231,7 +220,7 @@ export default function RoomPage() {
   if (!me) {
     // 말랑월드: 닉네임 입력 없이 자동 입장 중
     if (hub && room.phase === "waiting") {
-      return <HubWait text="입장 중..." error={hubError} debug={hubDebug} />;
+      return <HubWait text="입장 중..." error={hubError} />;
     }
 
     // 이미 시작된 게임에는 참가 불가
@@ -261,7 +250,6 @@ export default function RoomPage() {
               새 판으로 다시 만들기
             </Button>
           )}
-          {hubDebug && <div className="text-[11px] text-muted font-mono mb-2 break-all">{hubDebug}</div>}
           <Button className="w-full" onClick={() => router.push("/")}>
             메인으로
           </Button>
@@ -303,17 +291,7 @@ export default function RoomPage() {
   // 정상 - phase별 화면
   switch (room.phase) {
     case "waiting":
-      return (
-        <>
-          <WaitingRoom room={room} players={players} me={me} />
-          {hubDebug && (
-            <div className="fixed bottom-1 left-2 text-[10px] text-muted font-mono pointer-events-none">
-              {hubDebug}
-              {hubError ? ` · 오류: ${hubError}` : ""}
-            </div>
-          )}
-        </>
-      );
+      return <WaitingRoom room={room} players={players} me={me} />;
     case "team_setup":
       return <TeamSetup room={room} players={players} me={me} />;
     case "rules":
@@ -362,10 +340,9 @@ function Notice({
 }
 
 // 말랑월드 자동 입장 대기 화면
-function HubWait({ text, error, debug }: { text: string; error: string; debug?: string }) {
+function HubWait({ text, error }: { text: string; error: string }) {
   return (
     <Notice title={text} desc="">
-      {debug && <div className="text-[11px] text-muted font-mono mt-1 break-all">{debug}</div>}
       {error && (
         <>
           <div className="text-[13px] font-bold text-stamp mt-1">{error}</div>
