@@ -61,8 +61,14 @@ function TeamResult({
   const intercepted = data.intercepted === true;
   const decoded = data.ownCorrect === true;
   const stamp = intercepted ? "가로채기!" : decoded ? "해독 성공" : "해독 실패";
+  const dark = target === "black";
   return (
-    <div className="relative bg-white border-2 border-ink rounded-[20px] px-4 pt-[18px] pb-3 text-center mt-2">
+    <div
+      className={cn(
+        "relative rounded-[20px] px-4 pt-[18px] pb-3 text-center mt-2",
+        dark ? "bg-bt text-bt-ink" : "bg-wt text-wt-ink border-2 border-wt-ink"
+      )}
+    >
       <span
         className={cn(
           "stamp-mark absolute -right-1.5 -top-3.5 border-[3px] rounded-lg px-2.5 py-1 font-serif font-black text-[15px] bg-white/85",
@@ -71,8 +77,16 @@ function TeamResult({
       >
         {stamp}
       </span>
-      <div className="text-[11px] tracking-[0.2em] font-bold text-muted">
-        {targetTeam.name} 암호{mine ? " · 우리 팀" : ""}
+      <div className="flex justify-center items-center gap-1.5">
+        <span
+          className={cn(
+            "text-[13px] font-black rounded-full px-2.5 py-0.5",
+            dark ? "bg-bt-ink text-bt" : "bg-wt-ink text-wt"
+          )}
+        >
+          {targetTeam.name}
+        </span>
+        <span className="text-[11px] tracking-[0.2em] font-bold opacity-70">암호{mine ? " · 우리 팀" : ""}</span>
       </div>
       <div className="font-mono font-bold text-[40px] tracking-[0.2em] mt-1 mb-2">{data.code.join("·")}</div>
       <div className="flex flex-col gap-1.5 text-left">
@@ -91,13 +105,13 @@ function TeamResult({
           />
         )}
       </div>
-      <div className="flex flex-col gap-1 mt-2.5 pt-2 border-t border-line text-left">
+      <div className={cn("flex flex-col gap-1 mt-2.5 pt-2 border-t text-left", dark ? "border-white/20" : "border-wt-ink/20")}>
         {data.clues.map((c, i) => (
           <div key={i} className="flex items-center gap-2 text-[15px]">
             <span className="font-black flex-1 min-w-0 break-all">{c}</span>
             <span className="font-mono font-bold">→ {data.code[i]}</span>
             {mine && (
-              <span className="text-xs text-muted w-16 text-right truncate">
+              <span className="text-xs opacity-60 w-16 text-right truncate">
                 {targetTeam.keywords[data.code[i] - 1] || ""}
               </span>
             )}
