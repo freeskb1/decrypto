@@ -3,7 +3,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
-import { submitClues } from "@/lib/game";
+import { submitClues, takeOverEncryptor } from "@/lib/game";
 import type { Room, Round, TeamState, TeamId, Player } from "@/types/game";
 import { validateClues } from "@/types/game";
 import { ClueHistory, HoldCode, KeywordGrid } from "../ui";
@@ -15,6 +15,8 @@ export default function StageEncrypting({
   myTeamId,
   me,
   encryptorName,
+  canTakeOver,
+  takeOverReason,
 }: {
   room: Room;
   round: Round;
@@ -22,7 +24,11 @@ export default function StageEncrypting({
   myTeamId: TeamId;
   me: Player;
   encryptorName: string;
+  canTakeOver?: boolean; // 암호전달자가 연결이 끊겼거나 시간이 다 됨 → 팀원이 대신 쓸 수 있음
+  takeOverReason?: string;
 }) {
+  const toast = useToast();
+  const [taking, setTaking] = useState(false);
   const myRound = round[myTeamId];
   const isMeEncryptor = myRound.encryptorUid === me.uid;
   const mySubmitted = myRound.cluesSubmittedAt !== null;
@@ -47,10 +53,29 @@ export default function StageEncrypting({
           {mySubmitted ? "우리 단서 준비 완료" : `${encryptorName}님이 단서를 쓰는 중`}
         </h2>
         <p className="text-[13px] text-muted mt-1">
-          {mySubmitted
-            ? "상대 팀 암호전달자를 기다려요. 단서는 차례가 오면 모두에게 공개돼요."
-            : "암호전달자에게 말 걸지 말고, 키워드를 보며 기다려요."}
+          {mySubmitted ? "상대 팀을 기다려요." : "말 걸지 말고 기다려요."}
         </p>
+        {!mySubmitted && canTakeOver && (
+          <div className="mt-3 pt-3 border-t border-line">
+            <p className="text-[13px] font-bold text-stamp mb-2">{takeOverReason}</p>
+            <Button
+              variant="outline"
+              className="w-full"
+              disabled={taking}
+              onClick={async () => {
+                setTaking(true);
+                try {
+                  await takeOverEncryptor(room.id, round.roundNumber, myTeamId, me.uid);
+                } catch (e: any) {
+                  toast.show(e?.message || "대신하기 실패", "error");
+                }
+                setTaking(false);
+              }}
+            >
+              내가 대신 암호전달자 하기
+            </Button>
+          </div>
+        )}
       </div>
       <div className="text-xs font-bold text-muted px-1">우리 팀 키워드</div>
       <KeywordGrid keywords={myTeam.keywords} teamId={myTeamId} big />
@@ -108,13 +133,10 @@ function EncryptorView({
         <HoldCode code={myRound.code} />
         <div className="bg-white border-[1.5px] border-line rounded-2xl px-4 py-3.5">
           <h2 className="font-serif font-black text-[20px]">단서 확정 완료</h2>
-          <p className="text-[13px] text-muted mt-1">
-            이제 말하지 말고 기다려요. 차례가 오면 단서가 모두의 화면에 떠요.
-          </p>
+          <p className="text-[13px] text-muted mt-1">이제 말하지 말고 기다려요.</p>
           <div className="flex flex-col gap-1.5 mt-3">
             {myRound.clues.map((c, i) => (
               <div key={i} className="flex items-center gap-2.5 bg-paper rounded-xl px-3 py-2">
-                <span className="font-mono text-xs text-muted w-4">{["①", "②", "③"][i]}</span>
                 <span className="text-[18px] font-black break-all">{c}</span>
               </div>
             ))}

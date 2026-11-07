@@ -4,7 +4,7 @@ import { goToKeywordReveal } from "@/lib/game";
 import type { Room, Player } from "@/types/game";
 import { useToast } from "@/components/ui/toast";
 import { ArrowRight } from "lucide-react";
-import { Screen, PageHead, WaitLine } from "./ui";
+import { Screen, PageHead } from "./ui";
 import { ClueBanList } from "./RulesContent";
 
 export default function RulesIntro({
@@ -17,13 +17,13 @@ export default function RulesIntro({
   me: Player | undefined;
 }) {
   const toast = useToast();
-  const host = players.find((p) => p.isHost);
+  // 누구든 넘길 수 있음 (방장 폰이 꺼져도 멈추지 않게)
   const handleNext = async () => {
-    if (!me?.isHost) {
-      toast.show("방장만 진행할 수 있어요", "error");
-      return;
+    try {
+      await goToKeywordReveal(room.id);
+    } catch (e: any) {
+      toast.show(e?.message || "넘기기 실패", "error");
     }
-    await goToKeywordReveal(room.id);
   };
 
   return (
@@ -50,15 +50,9 @@ export default function RulesIntro({
         <ClueBanList />
 
         <div className="mt-auto">
-          {me?.isHost ? (
-            <Button size="lg" className="w-full" onClick={handleNext}>
-              확인했어요 · 키워드 보기 <ArrowRight className="w-4 h-4" />
-            </Button>
-          ) : (
-            <WaitLine>
-              기다리는 중: 방장 <b className="font-black">{host?.nickname || ""}</b>이 넘기면 키워드가 나와요
-            </WaitLine>
-          )}
+          <Button size="lg" className="w-full" onClick={handleNext}>
+            확인했어요 · 키워드 보기 <ArrowRight className="w-4 h-4" />
+          </Button>
         </div>
       </div>
     </Screen>

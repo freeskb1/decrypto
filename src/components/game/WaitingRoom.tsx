@@ -1,10 +1,10 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Copy, Crown, Shuffle, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { useRouter } from "next/navigation";
-import { assignTeamsAndStart } from "@/lib/game";
+import { assignTeamsAndStart, isPresent, serverNow } from "@/lib/game";
 import type { Room, Player } from "@/types/game";
 import { MIN_PLAYERS, MAX_PLAYERS } from "@/types/game";
 import { Screen, PageHead, WaitLine } from "./ui";
@@ -22,10 +22,19 @@ export default function WaitingRoom({
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const isHost = me?.isHost ?? false;
+  const [now, setNow] = useState(() => serverNow());
+  useEffect(() => {
+    const t = setInterval(() => setNow(serverNow()), 5000);
+    return () => clearInterval(t);
+  }, []);
+  // 연결이 끊긴 사람은 흐리게 (폰 화면이 꺼진 것일 수도 있어서 빼지는 않음)
+  const here = players.filter((p) => isPresent(p, now) || p.uid === me?.uid);
   const count = players.length;
   const tooFew = count < MIN_PLAYERS;
   const tooMany = count > MAX_PLAYERS;
   const host = players.find((p) => p.isHost);
+  // 방장이 없거나 자리를 비웠으면 누구든 팀을 나눌 수 있음
+  const canLead = isHost || !host || !isPresent(host, now);
 
   const copyCode = async () => {
     try {
@@ -83,10 +92,19 @@ export default function WaitingRoom({
           <div className="text-xs font-bold text-muted mb-2 px-1">모인 사람</div>
           <div className="grid grid-cols-2 gap-1.5">
             {players.map((p) => (
-              <div key={p.uid} className="flex items-center gap-1.5 px-2.5 py-2 bg-paper rounded-xl">
+              <div
+                key={p.uid}
+                className={`flex items-center gap-1.5 px-2.5 py-2 bg-paper rounded-xl ${
+                  here.includes(p) ? "" : "opacity-40"
+                }`}
+              >
                 {p.isHost && <Crown className="w-3.5 h-3.5 text-stamp shrink-0" />}
                 <span className="text-sm font-bold truncate">{p.nickname}</span>
-                {p.uid === me?.uid && <span className="text-[11px] text-muted ml-auto">나</span>}
+                {p.uid === me?.uid ? (
+                  <span className="text-[11px] text-muted ml-auto">나</span>
+                ) : !here.includes(p) ? (
+                  <span className="text-[11px] text-muted ml-auto">연결 끊김</span>
+                ) : null}
               </div>
             ))}
           </div>
@@ -95,7 +113,7 @@ export default function WaitingRoom({
         <div className="bg-wt text-wt-ink rounded-2xl px-4 py-3 text-[13px] leading-relaxed">
           <b className="font-black">4~8명 · 같은 방에서 각자 폰으로</b>
           <br />
-          의논은 소리 내어 해요 (채팅 없음). 방장이 팀을 무작위로 나눠요.
+          의논은 소리 내어 해요. 팀은 무작위로 나뉘어요.
           {tooFew && (
             <>
               <br />
@@ -115,7 +133,7 @@ export default function WaitingRoom({
         </div>
 
         <div className="mt-auto flex flex-col gap-2">
-          {isHost ? (
+          {canLead ? (
             <Button size="lg" className="w-full" onClick={handleAssign} disabled={tooFew || tooMany || busy}>
               <Shuffle className="w-4 h-4" />
               {tooFew ? `${MIN_PLAYERS - count}명 더 필요해요` : "팀 랜덤 배정"}

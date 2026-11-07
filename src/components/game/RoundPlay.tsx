@@ -116,6 +116,10 @@ export default function RoundPlay({
     ? Math.max(0, TIMER_SECONDS - Math.floor((now - (round.encryptingTimerStartAt || 0)) / 1000))
     : TIMER_SECONDS;
   const timeOver = timerRunning && timeLeft <= 0;
+  // 우리 팀 암호전달자가 연결이 끊겼거나 우리 팀 시간이 다 됨 → 팀원이 대신할 수 있음
+  const encP = players.find((p) => p.uid === round[myTeamId].encryptorUid);
+  const encAway = stage === "encrypting" && !round[myTeamId].cluesSubmittedAt && (!encP || !isPresent(encP, now));
+  const myTimeOver = timeOver && pendingEncryptors[0] === myTeamId;
 
   // ===== 내 역할 + 기다리는 사람 =====
   let role = "";
@@ -232,6 +236,12 @@ export default function RoundPlay({
             myTeamId={myTeamId}
             me={me}
             encryptorName={nick(round[myTeamId].encryptorUid)}
+            canTakeOver={encAway || myTimeOver}
+            takeOverReason={
+              encAway
+                ? `${nick(round[myTeamId].encryptorUid)}님 연결이 끊겼어요`
+                : "시간이 다 됐어요"
+            }
           />
         )}
 

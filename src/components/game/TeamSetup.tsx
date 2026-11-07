@@ -7,7 +7,7 @@ import { subscribeTeam, updateTeamName, goToRulesScreen } from "@/lib/game";
 import type { Room, Player, TeamState, TeamId } from "@/types/game";
 import { defaultTeamName } from "@/types/game";
 import { ArrowRight, Crown } from "lucide-react";
-import { Screen, PageHead, TeamPill, WaitLine } from "./ui";
+import { Screen, PageHead, TeamPill } from "./ui";
 import { cn } from "@/lib/utils";
 
 export default function TeamSetup({
@@ -42,7 +42,6 @@ export default function TeamSetup({
   }
 
   const myTeamId: TeamId = me.team;
-  const host = players.find((p) => p.isHost);
 
   const handleNameChange = (val: string) => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -51,12 +50,13 @@ export default function TeamSetup({
     }, 400);
   };
 
+  // 누구든 넘길 수 있음 (방장 폰이 꺼져도 멈추지 않게)
   const handleStart = async () => {
-    if (!me.isHost) {
-      toast.show("방장만 진행할 수 있어요", "error");
-      return;
+    try {
+      await goToRulesScreen(room.id);
+    } catch (e: any) {
+      toast.show(e?.message || "넘기기 실패", "error");
     }
-    await goToRulesScreen(room.id);
   };
 
   return (
@@ -64,7 +64,7 @@ export default function TeamSetup({
       <PageHead title="팀 구성" right={<TeamPill teamId={myTeamId} name={`나: ${(myTeamId === "white" ? white : black).name}`} />} />
       <div className="flex-1 flex flex-col gap-3 px-4 py-4">
         <p className="text-[13px] text-muted">
-          팀이 무작위로 나뉘었어요. 같은 팀끼리 가까이 앉아요. 팀 이름은 바꿔도 돼요.
+          같은 팀끼리 가까이 앉아요.
         </p>
         {(["white", "black"] as TeamId[]).map((t) => (
           <TeamCard
@@ -78,15 +78,9 @@ export default function TeamSetup({
           />
         ))}
         <div className="mt-auto">
-          {me.isHost ? (
-            <Button size="lg" className="w-full" onClick={handleStart}>
-              다음: 단서 규칙 <ArrowRight className="w-4 h-4" />
-            </Button>
-          ) : (
-            <WaitLine>
-              기다리는 중: 방장 <b className="font-black">{host?.nickname || ""}</b>이 넘기면 시작해요
-            </WaitLine>
-          )}
+          <Button size="lg" className="w-full" onClick={handleStart}>
+            다 앉았어요 · 다음 <ArrowRight className="w-4 h-4" />
+          </Button>
         </div>
       </div>
     </Screen>

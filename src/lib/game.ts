@@ -659,7 +659,8 @@ export async function shuffleTeamKeywords(roomId: string, teamId: TeamId) {
 export async function goToRulesScreen(roomId: string) {
   await roomTx(roomId, (room) => {
     if (room.phase !== "team_setup") return false;
-    room.phase = "rules";
+    // 다시 하기 때는 규칙 안내를 건너뜀 (한 번 본 방)
+    room.phase = room.rulesSeen ? "keyword_reveal" : "rules";
     return true;
   });
 }
@@ -668,6 +669,7 @@ export async function goToKeywordReveal(roomId: string) {
   await roomTx(roomId, (room) => {
     if (room.phase !== "rules") return false;
     room.phase = "keyword_reveal";
+    room.rulesSeen = true;
     return true;
   });
 }
@@ -728,6 +730,27 @@ export async function submitClues(
     } else if (!round.encryptingTimerStartAt) {
       round.encryptingTimerStartAt = now; // 다른 암호전달자에게 30초
     }
+    return true;
+  });
+  if (error) throw new Error(error);
+}
+
+// ====== 암호전달자 대신하기 ======
+// 이번 암호전달자가 연결이 끊겼거나 시간이 다 됐을 때, 같은 팀원이 대신 단서를 씀 (게임이 멈추지 않게)
+export async function takeOverEncryptor(roomId: string, roundNumber: number, teamId: TeamId, uid: string) {
+  let error = "";
+  await roomTx(roomId, (room) => {
+    error = "";
+    if (room.phase !== "round_in_progress" || num(room.roundNumber) !== roundNumber) return false;
+    const round = room.rounds?.[roundNumber];
+    if (!round || round.stage !== "encrypting") return false;
+    const mine = round[teamId];
+    if (!mine || mine.cluesSubmittedAt) return false;
+    if (room.players?.[uid]?.team !== teamId) {
+      error = "같은 팀만 대신할 수 있어요";
+      return false;
+    }
+    mine.encryptorUid = uid;
     return true;
   });
   if (error) throw new Error(error);

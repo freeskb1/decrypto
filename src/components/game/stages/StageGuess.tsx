@@ -100,7 +100,7 @@ export default function StageGuess({
           )}
           <Button
             size="lg"
-            variant={kind === "intercept" ? "red" : "default"}
+            variant={kind === "intercept" && complete ? "red" : "default"}
             className="w-full"
             onClick={handleSubmit}
             disabled={!complete || submitting}
